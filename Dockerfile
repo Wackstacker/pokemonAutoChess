@@ -1,5 +1,5 @@
 # Build Step 1 - Create the base
-FROM node:20.18-alpine AS base
+FROM node:latest AS base
 RUN apk add git --no-cache
 COPY ./ /usr/src/app
 WORKDIR /usr/src/app
@@ -18,7 +18,7 @@ RUN npm run build
 # because in the production-ready image we do not need the sources for
 # the assetpack or music assets in the isolated image for running the app.
 
-FROM node:20.18-alpine
+FROM node:latest
 WORKDIR /usr/src/app
 COPY package*.json ./
 RUN npm install --only=production --ignore-scripts
