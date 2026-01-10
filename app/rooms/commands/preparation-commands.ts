@@ -1,29 +1,34 @@
 import { memoryUsage } from "node:process"
+import { setTimeout } from "node:timers/promises"
 import { Command } from "@colyseus/command"
 import { Client, matchMaker } from "colyseus"
+import { UserRecord } from "firebase-admin/lib/auth/user-record"
 import { FilterQuery } from "mongoose"
+import {
+  EloRankThreshold,
+  MAX_PLAYERS_PER_GAME,
+  MIN_HUMAN_PLAYERS
+} from "../../config"
+import {
+  getPendingGame,
+  isPlayerTimeout,
+  setPendingGame
+} from "../../core/pending-game-manager"
 import { GameUser, IGameUser } from "../../models/colyseus-models/game-user"
 import { BotV2, IBot } from "../../models/mongo-models/bot-v2"
 import UserMetadata from "../../models/mongo-models/user-metadata"
 import { Role } from "../../types"
-import {
-  EloRank,
-  EloRankThreshold,
-  MAX_PLAYERS_PER_GAME,
-  MIN_HUMAN_PLAYERS
-} from "../../types/Config"
+import { CloseCodes } from "../../types/enum/CloseCodes"
+import { EloRank } from "../../types/enum/EloRank"
 import { BotDifficulty, GameMode } from "../../types/enum/Game"
+import { SpecialGameRule } from "../../types/enum/SpecialGameRule"
+import { getRank } from "../../utils/elo"
 import { logger } from "../../utils/logger"
 import { max } from "../../utils/number"
 import { cleanProfanity } from "../../utils/profanity-filter"
 import { pickRandomIn } from "../../utils/random"
 import { entries, values } from "../../utils/schemas"
 import PreparationRoom from "../preparation-room"
-import { CloseCodes } from "../../types/enum/CloseCodes"
-import { getRank } from "../../utils/elo"
-import { SpecialGameRule } from "../../types/enum/SpecialGameRule"
-import { UserRecord } from "firebase-admin/lib/auth/user-record"
-import { setTimeout } from "node:timers/promises"
 
 export class OnJoinCommand extends Command<
   PreparationRoom,
@@ -35,17 +40,20 @@ export class OnJoinCommand extends Command<
 > {
   async execute({ client, options, auth }) {
     try {
-      const timeoutDateStr = await this.room.presence.hget(
-        client.auth.uid,
-        "user_timeout"
-      )
-      if (timeoutDateStr) {
-        const timeout = new Date(timeoutDateStr).getTime()
-        if (timeout > Date.now()) {
-          client.leave(CloseCodes.USER_TIMEOUT)
-          return
-        }
+      if (await isPlayerTimeout(this.room.presence, client.auth.uid)) {
+        client.leave(CloseCodes.USER_TIMEOUT)
+        return
       }
+
+      const pendingGame = await getPendingGame(
+        this.room.presence,
+        client.auth.uid
+      )
+      if (pendingGame != null && !pendingGame.isExpired) {
+        client.leave(CloseCodes.USER_IN_ANOTHER_GAME)
+        return
+      }
+
       if (
         this.state.ownerId == "" &&
         this.state.gameMode === GameMode.CUSTOM_LOBBY
@@ -102,6 +110,7 @@ export class OnJoinCommand extends Command<
             u.uid,
             u.displayName,
             u.elo,
+            u.games,
             u.avatar,
             false,
             false,
@@ -273,6 +282,10 @@ export class OnGameStartRequestCommand extends Command<
           minRank: this.state.minRank
         })
 
+        this.state.users.forEach((user) => {
+          setPendingGame(this.room.presence, user.uid, gameRoom.roomId)
+        })
+
         this.room.presence.publish("game-started", {
           gameId: gameRoom.roomId,
           preparationId: this.room.roomId
@@ -411,9 +424,15 @@ export class OnRoomChangeSpecialRule extends Command<
     specialRule: SpecialGameRule | null
   }
 > {
-  execute({ client, specialRule }) {
+  async execute({ client, specialRule }) {
     try {
-      if (client.auth?.uid == this.state.ownerId) {
+      const u = await UserMetadata.findOne({ uid: client.auth?.uid })
+      if (!u) {
+        client.leave(CloseCodes.USER_NOT_AUTHENTICATED)
+        return
+      }
+
+      if (client.auth?.uid == this.state.ownerId && u.role === Role.ADMIN) {
         this.state.specialGameRule = specialRule
         if (specialRule != null) {
           this.state.noElo = true
@@ -423,9 +442,9 @@ export class OnRoomChangeSpecialRule extends Command<
         this.room.state.addMessage({
           author: "Server",
           authorId: "server",
-          payload: `Room leader ${
+          payload: `Smeargle's Scribble mode has been ${
             specialRule ? "enabled" : "disabled"
-          } Smeargle's Scribble for this game. Players need to ready again.`,
+          } for this game. Players need to ready again.`,
           avatar: leader?.avatar
         })
 
@@ -461,9 +480,9 @@ export class OnChangeNoEloCommand extends Command<
         this.room.state.addMessage({
           author: "Server",
           authorId: "server",
-          payload: `Room leader ${
+          payload: `Elo gain has been ${
             noElo ? "disabled" : "enabled"
-          } ELO gain for this game. Players need to ready again.`,
+          } for this game. Players need to ready again.`,
           avatar: leader?.avatar
         })
 
@@ -516,27 +535,6 @@ export class OnKickPlayerCommand extends Command<
             }
           }
         })
-      }
-    } catch (error) {
-      logger.error(error)
-    }
-  }
-}
-
-export class OnDeleteRoomCommand extends Command<
-  PreparationRoom,
-  {
-    client: Client
-  }
-> {
-  execute({ client }) {
-    try {
-      const user = this.state.users.get(client.auth?.uid)
-      if (user && [Role.ADMIN, Role.MODERATOR].includes(user.role)) {
-        this.room.clients.forEach((cli) => {
-          cli.leave(CloseCodes.ROOM_DELETED)
-        })
-        this.room.disconnect()
       }
     } catch (error) {
       logger.error(error)
@@ -600,7 +598,7 @@ export class OnToggleReadyCommand extends Command<
 > {
   execute({ client, ready }) {
     try {
-      // cannot toggle ready in quick play / ranked / tournament game mode
+      // cannot toggle ready in classic / ranked / tournament game mode
       if (this.room.state.gameMode !== GameMode.CUSTOM_LOBBY && ready !== true)
         return
 
@@ -640,6 +638,7 @@ export class CheckAutoStartRoom extends Command<PreparationRoom, void> {
     try {
       this.state.abortOnPlayerLeave = new AbortController()
       const signal = this.state.abortOnPlayerLeave.signal
+
       await setTimeout(5000, null, { signal })
 
       this.room.state.addMessage({
@@ -693,6 +692,7 @@ export class InitializeBotsCommand extends Command<
                 bot.id,
                 bot.name,
                 bot.elo,
+                99, // arbitrary number of games played
                 bot.avatar,
                 true,
                 true,
@@ -735,20 +735,20 @@ export class OnAddBotCommand extends Command<PreparationRoom, OnAddBotPayload> {
       } else {
         // pick a random bot per difficulty
         const difficulty = type
-        let d: FilterQuery<IBot> | undefined
+        let elo: FilterQuery<IBot> | undefined
 
         switch (difficulty) {
           case BotDifficulty.EASY:
-            d = { $lt: 800 }
+            elo = { $lt: 800 }
             break
           case BotDifficulty.MEDIUM:
-            d = { $gte: 800, $lt: 1100 }
+            elo = { $gte: 800, $lt: 1100 }
             break
           case BotDifficulty.HARD:
-            d = { $gte: 1100, $lt: 1400 }
+            elo = { $gte: 1100, $lt: 1400 }
             break
           case BotDifficulty.EXTREME:
-            d = { $gte: 1400 }
+            elo = { $gte: 1400 }
             break
         }
 
@@ -759,12 +759,10 @@ export class OnAddBotCommand extends Command<PreparationRoom, OnAddBotPayload> {
           }
         })
 
-        const bots = await BotV2.find({ id: { $nin: existingBots }, elo: d }, [
-          "avatar",
-          "elo",
-          "name",
-          "id"
-        ])
+        const bots = await BotV2.find(
+          { id: { $nin: existingBots }, elo, approved: true },
+          ["avatar", "elo", "name", "id"]
+        )
 
         if (bots.length <= 0) {
           this.room.state.addMessage({
@@ -793,6 +791,7 @@ export class OnAddBotCommand extends Command<PreparationRoom, OnAddBotPayload> {
             bot.id,
             bot.name,
             bot.elo,
+            99, // arbitrary number of games played
             bot.avatar,
             true,
             true,

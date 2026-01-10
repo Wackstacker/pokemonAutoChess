@@ -1,10 +1,13 @@
+import { pipeline } from "node:stream"
+import { SchemaCallbackProxy } from "@colyseus/schema"
 import { getStateCallbacks, Room } from "colyseus.js"
+import { t } from "i18next"
 import Phaser from "phaser"
 import MoveToPlugin from "phaser3-rex-plugins/plugins/moveto-plugin.js"
 import OutlinePlugin from "phaser3-rex-plugins/plugins/outlinepipeline-plugin.js"
 import React from "react"
 import { toast } from "react-toastify"
-import type { NonFunctionPropNames } from "../../../types/HelperTypes"
+import { FLOWER_POTS_POSITIONS_BLUE } from "../../../core/flower-pots"
 import { PokemonEntity } from "../../../core/pokemon-entity"
 import Simulation from "../../../core/simulation"
 import Count from "../../../models/colyseus-models/count"
@@ -34,22 +37,20 @@ import {
   Rarity
 } from "../../../types/enum/Game"
 import { Weather } from "../../../types/enum/Weather"
+import type { NonFunctionPropNames } from "../../../types/HelperTypes"
 import { logger } from "../../../utils/logger"
 import { clamp, max } from "../../../utils/number"
-import { SOUNDS, playSound } from "../pages/utils/audio"
-import { transformCoordinate } from "../pages/utils/utils"
+import { values } from "../../../utils/schemas"
+import { getCachedPortrait } from "../pages/component/game/game-pokemon-portrait"
+import { playSound, SOUNDS } from "../pages/utils/audio"
+import { transformBoardCoordinates } from "../pages/utils/utils"
 import { preference, subscribeToPreferences } from "../preferences"
 import store from "../stores"
 import { changePlayer, setPlayer, setSimulation } from "../stores/GameStore"
-import { getPortraitSrc } from "../../../utils/avatar"
+import { clearAbilityAnimations } from "./components/abilities-animations"
 import { BoardMode } from "./components/board-manager"
-import GameScene from "./scenes/game-scene"
-import { t } from "i18next"
-import { cc } from "../pages/utils/jsx"
-import { values } from "../../../utils/schemas"
-import { SchemaCallbackProxy } from "@colyseus/schema"
-import { getPkmWithCustom } from "../../../models/colyseus-models/pokemon-customs"
 import { DEPTH } from "./depths"
+import GameScene from "./scenes/game-scene"
 
 class GameContainer {
   room: Room<GameState>
@@ -93,20 +94,93 @@ class GameContainer {
     $simulation.listen("weather", (value, previousValue) => {
       this.handleWeatherChange(simulation, value)
     })
-    ;[$simulation.blueTeam, $simulation.redTeam].forEach((team) => {
+
+    for (const team of [$simulation.blueTeam, $simulation.redTeam]) {
       team.onAdd((p, key) =>
-        this.initializePokemon(<PokemonEntity>p, simulation)
+        this.initializePokemon(
+          <PokemonEntity>p,
+          simulation,
+          team === $simulation.blueTeam
+            ? simulation.bluePlayerId
+            : simulation.redPlayerId
+        )
       )
       team.onRemove((pokemon, key) => {
         // logger.debug('remove pokemon');
         this.gameScene?.battle?.removePokemon(simulation.id, pokemon)
       })
+    }
+
+    $simulation.listen("started", (value, previousValue) => {
+      if (
+        this.gameScene?.board?.player.simulationId === simulation.id &&
+        value === true &&
+        value !== previousValue
+      ) {
+        this.gameScene?.board?.removePokemonsOnBoard()
+        this.gameScene?.battle?.onSimulationStart()
+      }
     })
   }
 
-  initializePokemon(pokemon: PokemonEntity, simulation: Simulation) {
-    this.gameScene?.battle?.addPokemonEntitySprite(simulation.id, pokemon)
-    const fields: NonFunctionPropNames<Status>[] = [
+  initializePokemon(
+    pokemon: PokemonEntity,
+    simulation: Simulation,
+    playerId: string
+  ) {
+    this.gameScene?.battle?.addPokemonEntitySprite(
+      simulation.id,
+      pokemon,
+      playerId
+    )
+
+    const $pokemon = this.$<PokemonEntity>(pokemon)
+
+    const fields: (NonFunctionPropNames<PokemonEntity> &
+      keyof IPokemonEntity)[] = [
+      "positionX",
+      "positionY",
+      "orientation",
+      "action",
+      "critChance",
+      "critPower",
+      "ap",
+      "luck",
+      "speed",
+      "hp",
+      "maxHP",
+      "shield",
+      "pp",
+      "atk",
+      "def",
+      "speDef",
+      "range",
+      "targetX",
+      "targetY",
+      "team",
+      "index",
+      "name",
+      "shiny",
+      "skill",
+      "stars",
+      "types",
+      "stacks",
+      "stacksRequired"
+    ]
+
+    fields.forEach((field) => {
+      $pokemon.listen(field, (value, previousValue) => {
+        this.gameScene?.battle?.changePokemon(
+          simulation.id,
+          pokemon,
+          field,
+          value,
+          previousValue
+        )
+      })
+    })
+
+    const statusFields: NonFunctionPropNames<Status>[] = [
       "armorReduction",
       "burn",
       "charm",
@@ -128,68 +202,30 @@ class GameContainer {
       "protect",
       "skydiving",
       "psychicField",
-      "resurection",
-      "resurecting",
+      "resurrection",
+      "resurrecting",
       "runeProtect",
       "silence",
       "sleep",
       "spikeArmor",
       "wound",
       "enraged",
+      "possessed",
       "locked",
       "blinded",
       "magicBounce",
+      "reflect",
       "tree"
     ]
 
-    const $pokemon = this.$<PokemonEntity>(pokemon)
-
-    fields.forEach((field) => {
+    statusFields.forEach((field) => {
       $pokemon.status.listen(field, (value, previousValue) => {
-        this.gameScene?.battle?.changeStatus(simulation.id, pokemon, field)
-      })
-    })
-
-    $pokemon.onChange(() => {
-      const fields: (NonFunctionPropNames<PokemonEntity> &
-        keyof IPokemonEntity)[] = [
-        "positionX",
-        "positionY",
-        "orientation",
-        "action",
-        "critChance",
-        "critPower",
-        "ap",
-        "luck",
-        "speed",
-        "life",
-        "hp",
-        "shield",
-        "pp",
-        "atk",
-        "def",
-        "speDef",
-        "range",
-        "targetX",
-        "targetY",
-        "team",
-        "index",
-        "shiny",
-        "skill",
-        "stars",
-        "types"
-      ]
-
-      fields.forEach((field) => {
-        $pokemon.listen(field, (value, previousValue) => {
-          this.gameScene?.battle?.changePokemon(
-            simulation.id,
-            pokemon,
-            field,
-            value,
-            previousValue || value
-          )
-        })
+        this.gameScene?.battle?.changeStatus(
+          simulation.id,
+          pokemon,
+          field,
+          previousValue
+        )
       })
     })
 
@@ -204,7 +240,6 @@ class GameContainer {
       "fieldCount",
       "fightingBlockCount",
       "fairyCritCount",
-      "powerLensCount",
       "starDustCount",
       "spellBlockedCount",
       "manaBurnCount",
@@ -215,8 +250,8 @@ class GameContainer {
       "tripleAttackCount",
       "upgradeCount",
       "soulDewCount",
-      "defensiveRibbonCount",
-      "magmarizerCount"
+      "muscleBandCount",
+      "machRibbonCount"
     ]
 
     fieldsCount.forEach((field) => {
@@ -297,8 +332,8 @@ class GameContainer {
   }
 
   initializeEvents() {
-    this.room.onMessage(Transfer.DRAG_DROP_FAILED, (message) =>
-      this.handleDragDropFailed(message)
+    this.room.onMessage(Transfer.DRAG_DROP_CANCEL, (message) =>
+      this.handleDragDropCancel(message)
     )
     const $state = this.$<GameState>(this.room.state)
     $state.avatars.onAdd((avatar) => {
@@ -392,47 +427,63 @@ class GameContainer {
       this.initializeGame()
     }
 
-    const listenForPokemonChanges = (pokemon: Pokemon) => {
+    const listenForPokemonChanges = (
+      pokemon: Pokemon,
+      fields: NonFunctionPropNames<IPokemon>[] = [
+        "positionX",
+        "positionY",
+        "action",
+        "hp",
+        "maxHP",
+        "atk",
+        "ap",
+        "def",
+        "speed",
+        "luck",
+        "shiny",
+        "skill",
+        "supercharged"
+      ]
+    ) => {
       const $pokemon = this.$<Pokemon>(pokemon)
-      $pokemon.onChange(() => {
-        const fields: NonFunctionPropNames<IPokemon>[] = [
-          "positionX",
-          "positionY",
-          "action",
-          "hp",
-          "atk",
-          "ap",
-          "shiny",
-          "skill",
-          "meal"
-        ]
-        fields.forEach((field) => {
-          $pokemon.listen(field, (value, previousValue) => {
-            if (field && player.id === this.spectatedPlayerId) {
-              this.gameScene?.board?.changePokemon(
-                pokemon,
-                field,
-                value as IPokemon[typeof field],
-                previousValue as IPokemon[typeof field]
-              )
-            }
-          })
-        })
-
-        $pokemon.types.onChange((value, key) => {
-          if (player.id === this.spectatedPlayerId) {
-            const pokemonUI = this.gameScene?.board?.pokemons.get(pokemon.id)
-            if (pokemonUI) {
-              pokemonUI.types = new Set(values(pokemon.types))
-            }
+      fields.forEach((field) => {
+        $pokemon.listen(field, (value, previousValue) => {
+          if (field && player.id === this.spectatedPlayerId) {
+            this.gameScene?.board?.changePokemon(
+              pokemon,
+              field,
+              value as IPokemon[typeof field],
+              previousValue as IPokemon[typeof field]
+            )
           }
         })
+      })
 
-        $pokemon.items.onChange((value, key) => {
-          if (player.id === this.spectatedPlayerId) {
-            this.gameScene?.board?.updatePokemonItems(player.id, pokemon, value)
-          }
-        })
+      $pokemon.items.onAdd((item) => {
+        if (player.id === this.spectatedPlayerId) {
+          this.gameScene?.board?.updatePokemonItems(player.id, pokemon, item)
+        }
+      })
+
+      $pokemon.items.onRemove((item) => {
+        if (player.id === this.spectatedPlayerId) {
+          this.gameScene?.board?.updatePokemonItems(
+            player.id,
+            pokemon,
+            item,
+            true
+          )
+        }
+      })
+
+      $pokemon.dishes.onChange((value, key) => {
+        if (player.id === this.spectatedPlayerId) {
+          this.gameScene?.board?.updatePokemonDishes(
+            player.id,
+            pokemon,
+            values(pokemon.dishes)
+          )
+        }
       })
     }
 
@@ -440,12 +491,10 @@ class GameContainer {
 
     $player.board.onAdd((pokemon, key) => {
       if (pokemon.stars > 1) {
-        const custom = getPkmWithCustom(pokemon.index, player.pokemonCustoms)
         const i = React.createElement(
           "img",
           {
-            src: getPortraitSrc(pokemon.index, custom.shiny, custom.emotion),
-            className: cc({ pixelated: !preference("antialiasing") })
+            src: getCachedPortrait(pokemon.index, player.pokemonCustoms)
           },
           null
         )
@@ -456,7 +505,6 @@ class GameContainer {
       }
 
       listenForPokemonChanges(pokemon)
-
       this.handleBoardPokemonAdd(player, pokemon)
     }, false)
 
@@ -470,9 +518,6 @@ class GameContainer {
       store.dispatch(
         changePlayer({ id: player.id, field: "board", value: player.board })
       )
-      if (pokemon) {
-        listenForPokemonChanges(pokemon)
-      }
     })
 
     $player.items.onChange((value, key) => {
@@ -483,9 +528,53 @@ class GameContainer {
     })
 
     $player.synergies.onChange(() => {
-      if (player.id === this.spectatedPlayerId) {
+      if (
+        player.id === this.spectatedPlayerId &&
+        this.gameScene?.board?.mode === BoardMode.PICK
+      ) {
         this.gameScene?.board?.showLightCell()
-        this.gameScene?.board?.showBerryTrees()
+        this.gameScene?.board?.renderBerryTrees()
+        this.gameScene?.board?.renderFlowerPots()
+      }
+    })
+
+    $player.berryTreesStages.onChange((value, key) => {
+      this.gameScene?.board?.renderBerryTrees()
+    })
+
+    $player.flowerPots.onAdd((pokemon, index) => {
+      listenForPokemonChanges(pokemon, ["hp", "ap"])
+      const board = this.gameScene?.board
+      if (
+        board &&
+        player.id === this.spectatedPlayerId &&
+        this.gameScene?.board?.mode !== BoardMode.TOWN
+      ) {
+        board.renderFlowerPots()
+        const [x, y] = FLOWER_POTS_POSITIONS_BLUE[index]
+        const evolutionAnim = this.gameScene.add.sprite(
+          x,
+          y - 24,
+          "abilities",
+          "EVOLUTION/000.png"
+        )
+        evolutionAnim.once(Phaser.Animations.Events.ANIMATION_COMPLETE, () =>
+          evolutionAnim.destroy()
+        )
+        evolutionAnim.setScale(2).setDepth(DEPTH.BOOST_BACK).play("EVOLUTION")
+      }
+    }, false)
+
+    $player.flowerPots.onChange((pokemon, key) => {
+      store.dispatch(
+        changePlayer({
+          id: player.id,
+          field: "flowerPots",
+          value: player.flowerPots
+        })
+      )
+      if (pokemon) {
+        listenForPokemonChanges(pokemon, ["hp", "ap"])
       }
     })
   }
@@ -517,8 +606,10 @@ class GameContainer {
         this.gameScene.weatherManager.clearWeather()
         if (value === Weather.RAIN) {
           this.gameScene.weatherManager.addRain()
-        } else if (value === Weather.SUN) {
+        } else if (value === Weather.ZENITH) {
           this.gameScene.weatherManager.addSun()
+        } else if (value === Weather.DROUGHT) {
+          this.gameScene.weatherManager.addDrought()
         } else if (value === Weather.SANDSTORM) {
           this.gameScene.weatherManager.addSandstorm()
         } else if (value === Weather.SNOW) {
@@ -535,6 +626,8 @@ class GameContainer {
           this.gameScene.weatherManager.addMist()
         } else if (value === Weather.SMOG) {
           this.gameScene.weatherManager.addSmog()
+        } else if (value === Weather.MURKY) {
+          this.gameScene.weatherManager.addMurky()
         }
       }
     }
@@ -548,14 +641,10 @@ class GameContainer {
     index: string
     amount: number
   }) {
-    this.gameScene?.battle?.displayHeal(
-      message.x,
-      message.y,
-      message.amount,
-      message.type,
-      message.index,
-      message.id
-    )
+    if (document.hidden) return // do not display heal when the tab is not focused
+    if (preference("showDamageNumbers")) {
+      this.gameScene?.battle?.displayHeal(message)
+    }
   }
 
   handleDisplayDamage(message: {
@@ -566,15 +655,9 @@ class GameContainer {
     index: string
     amount: number
   }) {
+    if (document.hidden) return // do not display damage when the tab is not focused
     if (preference("showDamageNumbers")) {
-      this.gameScene?.battle?.displayDamage(
-        message.x,
-        message.y,
-        message.amount,
-        message.type,
-        message.index,
-        message.id
-      )
+      this.gameScene?.battle?.displayDamage(message)
     }
   }
 
@@ -587,17 +670,10 @@ class GameContainer {
     targetX?: number
     targetY?: number
     delay?: number
+    ap?: number
   }) {
-    this.gameScene?.battle?.displayAbility(
-      message.id,
-      message.skill,
-      message.orientation,
-      message.positionX,
-      message.positionY,
-      message.targetX,
-      message.targetY,
-      message.delay
-    )
+    if (document.hidden) return // do not display abilities when the tab is not focused
+    this.gameScene?.battle?.displayAbility(message)
   }
 
   /* Board pokemons */
@@ -610,22 +686,23 @@ class GameContainer {
       (board.mode === BoardMode.PICK || pokemon.positionY === 0)
     ) {
       const pokemonUI = this.gameScene?.board?.addPokemonSprite(pokemon)
-      if (pokemonUI && pokemon.action === PokemonActionState.FISH) {
+      if (!pokemonUI) return
+      if (pokemon.action === PokemonActionState.FISH) {
         pokemonUI.fishingAnimation()
-      } else if (pokemonUI && pokemon.stars > 1) {
+      } else if (pokemon.stars > 1) {
         pokemonUI.evolutionAnimation()
         playSound(
           pokemon.stars === 2 ? SOUNDS.EVOLUTION_T2 : SOUNDS.EVOLUTION_T3
         )
-      } else if (pokemonUI && pokemon.rarity === Rarity.HATCH) {
+      } else if (pokemon.rarity === Rarity.HATCH) {
         pokemonUI.hatchAnimation()
-      } else if (pokemonUI) {
+      } else {
         pokemonUI.spawnAnimation()
       }
     }
   }
 
-  handleDragDropFailed(message: {
+  handleDragDropCancel(message: {
     updateBoard: boolean
     updateItems: boolean
     text?: string
@@ -634,7 +711,7 @@ class GameContainer {
     const gameScene = this.gameScene
     if (gameScene?.lastDragDropPokemon && message.updateBoard) {
       const tg = gameScene.lastDragDropPokemon
-      const coordinates = transformCoordinate(tg.positionX, tg.positionY)
+      const coordinates = transformBoardCoordinates(tg.positionX, tg.positionY)
       tg.x = coordinates[0]
       tg.y = coordinates[1]
     }
@@ -644,10 +721,14 @@ class GameContainer {
     }
 
     if (message.text && message.pokemonId) {
-      const pokemon = this.player?.board.get(message.pokemonId)
+      const pokemon = this.gameScene?.board?.pokemons.get(message.pokemonId)
       if (pokemon) {
-        const [x, y] = transformCoordinate(pokemon.positionX, pokemon.positionY)
-        gameScene?.board?.displayText(x, y, t(message.text))
+        gameScene?.board?.displayText(
+          pokemon.x,
+          pokemon.y,
+          t(message.text),
+          true
+        )
       }
     }
   }
@@ -657,6 +738,7 @@ class GameContainer {
     if (this.room.state.phase !== GamePhaseState.TOWN) {
       this.gameScene?.setMap(player.map)
     }
+    this.gameScene && clearAbilityAnimations(this.gameScene)
     this.gameScene?.battle?.setPlayer(player)
     this.gameScene?.board?.setPlayer(player)
     this.gameScene?.itemsContainer?.setPlayer(player)
@@ -669,7 +751,6 @@ class GameContainer {
     if (this.gameScene?.battle) {
       this.gameScene?.battle.setSimulation(this.simulation)
     }
-    this.handleWeatherChange(simulation, simulation.weather)
   }
 
   onDragDrop(event: CustomEvent<IDragDropMessage>) {

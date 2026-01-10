@@ -1,3 +1,4 @@
+import { createSelector } from "@reduxjs/toolkit"
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Menu, MenuItem, MenuItemProps, Sidebar } from "react-pro-sidebar"
@@ -5,7 +6,11 @@ import { useNavigate } from "react-router"
 import pkg from "../../../../../../package.json"
 import { GADGETS } from "../../../../../core/gadgets"
 import { Role } from "../../../../../types"
-import { useAppDispatch, useAppSelector } from "../../../hooks"
+import {
+  selectConnectedPlayer,
+  useAppDispatch,
+  useAppSelector
+} from "../../../hooks"
 import { setSearchedUser } from "../../../stores/LobbyStore"
 import { toggleFullScreen } from "../../utils/fullscreen"
 import { cc } from "../../utils/jsx"
@@ -18,13 +23,15 @@ import { Modal } from "../modal/modal"
 import GameOptionsModal from "../options/game-options-modal"
 import Patchnotes from "../patchnotes/patchnotes"
 import { usePatchVersion } from "../patchnotes/usePatchVersion"
+import PokeGuesser from "../pokeguesser/pokeguesser"
 import Profile from "../profile/profile"
+import ServersList from "../servers/servers-list"
+import SynergyWheelModal from "../synergy-wheel/synergy-wheel"
+import TierListMakerModal from "../tier-list/tier-list-maker-modal"
 import { TournamentsAdmin } from "../tournaments-admin/tournaments-admin"
 import Wiki from "../wiki/wiki"
-import ServersList from "../servers/servers-list"
 
 import "./main-sidebar.css"
-import { createSelector } from "@reduxjs/toolkit"
 
 export type Page = "main_lobby" | "preparation" | "game"
 
@@ -77,11 +84,10 @@ export function MainSidebar(props: MainSidebarProps) {
     }
   }, [])
 
-  const player = useAppSelector(state => state.game.players.find((p) => p.id === state.network.uid))
+  const player = useAppSelector(selectConnectedPlayer)
   const playersAlive = useAppSelector(
-    createSelector(
-      [(state) => state.game.players],
-      (players) => players.filter((p) => p.life > 0)
+    createSelector([(state) => state.game.players], (players) =>
+      players.filter((p) => p.life > 0)
     )
   )
   function onClickLeave() {
@@ -126,7 +132,7 @@ export function MainSidebar(props: MainSidebarProps) {
           }}
           shimmer={isNewPatch}
         >
-          {t("news")}
+          {t("patch_notes")}
         </NavLink>
 
         {page === "main_lobby" && (
@@ -183,15 +189,58 @@ export function MainSidebar(props: MainSidebarProps) {
           </NavLink>
         )}
 
-        {page !== "game" && ((!GADGETS.BOT_BUILDER.disabled && profileLevel >= GADGETS.BOT_BUILDER.levelRequired) || profile?.role === Role.ADMIN) && (
-          <NavLink svg="bot" onClick={() => navigate("/bot-builder")}>
-            {t("bot_builder")}
+        {page !== "game" &&
+          ((!GADGETS.POKEGUESSER.disabled &&
+            profileLevel >= GADGETS.POKEGUESSER.levelRequired) ||
+            profile?.role === Role.ADMIN) && (
+            <NavLink
+              svg="pokeguesser"
+              location="pokeguesser"
+              handleClick={changeModal}
+            >
+              {t("gadget.pokeguesser")}
+            </NavLink>
+          )}
+
+        {((!GADGETS.SYNERGY_WHEEL.disabled &&
+          profileLevel >= GADGETS.SYNERGY_WHEEL.levelRequired) ||
+          profile?.role === Role.ADMIN) && (
+          <NavLink
+            svg="synergy-wheel"
+            location="synergy-wheel"
+            handleClick={changeModal}
+          >
+            {t("gadget.synergy_wheel")}
           </NavLink>
         )}
 
-        {page !== "game" && ((!GADGETS.GAMEBOY.disabled && profileLevel >= GADGETS.GAMEBOY.levelRequired) || profile?.role === Role.ADMIN) && (
-          <NavLink svg="gameboy" onClick={() => navigate("/gameboy")}>
-            {t("gadget.gameboy")}
+        {page !== "game" &&
+          ((!GADGETS.BOT_BUILDER.disabled &&
+            profileLevel >= GADGETS.BOT_BUILDER.levelRequired) ||
+            profile?.role === Role.ADMIN) && (
+            <NavLink svg="bot" onClick={() => navigate("/bot-builder")}>
+              {t("bot_builder")}
+            </NavLink>
+          )}
+
+        {page !== "game" &&
+          ((!GADGETS.GAMEBOY.disabled &&
+            profileLevel >= GADGETS.GAMEBOY.levelRequired) ||
+            profile?.role === Role.ADMIN) && (
+            <NavLink svg="gameboy" onClick={() => navigate("/gameboy")}>
+              {t("gadget.gameboy")}
+            </NavLink>
+          )}
+
+        {((!GADGETS.TIER_LIST_MAKER.disabled &&
+          profileLevel >= GADGETS.TIER_LIST_MAKER.levelRequired) ||
+          profile?.role === Role.ADMIN) && (
+          <NavLink
+            svg="tier-list"
+            location="tier-list"
+            handleClick={changeModal}
+          >
+            {t("gadget.tier_list_maker")}
           </NavLink>
         )}
 
@@ -230,12 +279,11 @@ export function MainSidebar(props: MainSidebarProps) {
           {t("options")}
         </NavLink>
 
-        {page === "game" && document.fullscreenEnabled && <NavLink
-          svg="fullscreen"
-          onClick={toggleFullScreen}
-        >
-          {t("toggle_fullscreen")}
-        </NavLink>}
+        {page === "game" && document.fullscreenEnabled && (
+          <NavLink svg="fullscreen" onClick={toggleFullScreen}>
+            {t("toggle_fullscreen")}
+          </NavLink>
+        )}
 
         <div className="spacer"></div>
 
@@ -243,7 +291,8 @@ export function MainSidebar(props: MainSidebarProps) {
           <NavLink
             svg="players"
             className="community-servers"
-            location="servers" handleClick={changeModal}
+            location="servers"
+            handleClick={changeModal}
           >
             {t("community_servers")}
           </NavLink>
@@ -348,19 +397,22 @@ function NavLink(props: NavLinkProps) {
 }
 
 export type Modals =
-  | "profile"
-  | "meta"
-  | "wiki"
-  | "team-builder"
-  | "collection"
+  | "announcement"
   | "booster"
+  | "collection"
+  | "jukebox"
+  | "keybinds"
+  | "meta"
   | "news"
   | "options"
-  | "keybinds"
-  | "jukebox"
-  | "announcement"
-  | "tournaments"
+  | "pokeguesser"
+  | "profile"
   | "servers"
+  | "synergy-wheel"
+  | "team-builder"
+  | "tier-list"
+  | "tournaments"
+  | "wiki"
 
 function Modals({
   modal,
@@ -434,11 +486,20 @@ function Modals({
         onClose={closeModal}
         show={modal === "servers"}
         className="servers-modal"
-        header={t("community_servers")}>
+        header={t("community_servers")}
+      >
         <ServersList />
       </Modal>
       <TeamBuilderModal
         show={modal === "team-builder"}
+        handleClose={closeModal}
+      />
+      <TeamBuilderModal
+        show={modal === "team-builder"}
+        handleClose={closeModal}
+      />
+      <TierListMakerModal
+        show={modal === "tier-list"}
         handleClose={closeModal}
       />
       <GameOptionsModal
@@ -454,6 +515,11 @@ function Modals({
         <TournamentsAdmin />
       </Modal>
       <Jukebox show={modal === "jukebox"} handleClose={closeModal} />
+      <PokeGuesser show={modal === "pokeguesser"} handleClose={closeModal} />
+      <SynergyWheelModal
+        show={modal === "synergy-wheel"}
+        handleClose={closeModal}
+      />
     </>
   )
 }

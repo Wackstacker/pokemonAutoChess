@@ -2,9 +2,10 @@ import React from "react"
 import { useTranslation } from "react-i18next"
 import { Tooltip } from "react-tooltip"
 import {
+  MAX_LEVEL,
   RarityColor,
   RarityProbabilityPerLevel
-} from "../../../../../types/Config"
+} from "../../../../../config"
 import { Rarity } from "../../../../../types/enum/Game"
 import { useAppSelector } from "../../../hooks"
 
@@ -26,11 +27,12 @@ export default function GameRarityPercentage() {
         place="top"
       >
         <p>{t("encounter_rates")}</p>
-        <table style={{ width: "10vw" }}>
+        <table style={{ width: "100%", textAlign: "center" }}>
           <thead>
             <tr>
               <th>{t("rarity_label")}</th>
               <th>{t("rate")}</th>
+              {level < MAX_LEVEL && <th>{t("next_level")}</th>}
             </tr>
           </thead>
           <tbody>
@@ -42,6 +44,22 @@ export default function GameRarityPercentage() {
                 <td>
                   {Math.round(RarityProbabilityPerLevel[level][index] * 100)}%
                 </td>
+                {level < MAX_LEVEL && (
+                  <td
+                    style={{
+                      color:
+                        RarityProbabilityPerLevel[level + 1][index] <
+                        RarityProbabilityPerLevel[level][index]
+                          ? "#e76e55"
+                          : "#92cc41"
+                    }}
+                  >
+                    {Math.round(
+                      RarityProbabilityPerLevel[level + 1][index] * 100
+                    )}
+                    %
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

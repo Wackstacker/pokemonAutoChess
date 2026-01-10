@@ -1,7 +1,9 @@
 import { ArraySchema, MapSchema, Schema, SetSchema } from "@colyseus/schema"
-import Board from "../core/board"
+import type { Board } from "../core/board"
 import Dps from "../core/dps"
+import { Effect as EffectClass } from "../core/effects/effect"
 import { EvolutionRule } from "../core/evolution-rules"
+import { FlowerPot } from "../core/flower-pots"
 import Count from "../models/colyseus-models/count"
 import ExperienceManager from "../models/colyseus-models/experience-manager"
 import { IPokemonRecord } from "../models/colyseus-models/game-record"
@@ -16,12 +18,12 @@ import { TournamentSchema } from "../models/colyseus-models/tournament"
 import { Effects } from "../models/effects"
 import GameRoom from "../rooms/game-room"
 import { ILeaderboardInfo } from "../types/interfaces/LeaderboardInfo"
+import { AttackSprite } from "./Animation"
 import { Ability } from "./enum/Ability"
 import { DungeonPMDO } from "./enum/Dungeon"
-import { BoardEffect, Effect } from "./enum/Effect"
+import { BoardEffect, EffectEnum } from "./enum/Effect"
 import { Emotion } from "./enum/Emotion"
 import {
-  AttackType,
   GameMode,
   Orientation,
   PokemonActionState,
@@ -34,20 +36,17 @@ import { Passive } from "./enum/Passive"
 import { Pkm, PkmProposition } from "./enum/Pokemon"
 import { Synergy } from "./enum/Synergy"
 import { Weather } from "./enum/Weather"
-import { Effect as EffectClass } from "../core/effect"
 
 export * from "./enum/Emotion"
-
-export const CDN_PORTRAIT_URL =
-  "https://raw.githubusercontent.com/keldaanCommunity/SpriteCollab/master/portrait/"
+export * from "./enum/Item"
 
 export const CDN_URL =
   "https://raw.githubusercontent.com/keldaanCommunity/SpriteCollab/master"
 
-export const USERNAME_REGEXP = /^(\p{Letter}|[0-9]|\.|-|_){3,24}$/u
-
 export type PkmCustom = { shiny?: boolean; emotion?: Emotion }
-export type PkmWithCustom = { name: Pkm } & PkmCustom
+export interface PkmWithCustom extends PkmCustom {
+  name: Pkm
+}
 
 export enum Role {
   ADMIN = "ADMIN",
@@ -83,6 +82,7 @@ export enum Transfer {
   SHOP = "SHOP",
   ITEM = "ITEM",
   COOK = "COOK",
+  DIG = "DIG",
   GAME_START = "GAME_START",
   GAME_START_REQUEST = "GAME_START_REQUEST",
   GAME_END = "GAME_END",
@@ -93,7 +93,7 @@ export enum Transfer {
   BUY_EMOTION = "BUY_EMOTION",
   BOOSTER_CONTENT = "BOOSTER_CONTENT",
   USER = "USER",
-  DRAG_DROP_FAILED = "DRAG_DROP_FAILED",
+  DRAG_DROP_CANCEL = "DRAG_DROP_CANCEL",
   SHOW_EMOTE = "SHOW_EMOTE",
   FINAL_RANK = "FINAL_RANK",
   SEARCH_BY_ID = "SEARCH_BY_ID",
@@ -114,8 +114,8 @@ export enum Transfer {
   BANNED = "BANNED",
   POKEMON_DAMAGE = "POKEMON_DAMAGE",
   POKEMON_HEAL = "POKEMON_HEAL",
-  POKEMON_WANDERING = "POKEMON_WANDERING",
-  UNOWN_WANDERING = "UNOWN_WANDERING",
+  WANDERER = "WANDERER",
+  WANDERER_CLICKED = "WANDERER_CLICKED",
   VECTOR = "VECTOR",
   LOADING_PROGRESS = "LOADING_PROGRESS",
   LOADING_COMPLETE = "LOADING_COMPLETE",
@@ -125,9 +125,6 @@ export enum Transfer {
   REQUEST_ROOM = "REQUEST_ROOM",
   ADD_ROOM = "ADD_ROOM",
   REMOVE_ROOM = "REMOVE_ROOM",
-  ADD_BOT_DATABASE = "ADD_BOT_DATABASE",
-  DELETE_BOT_DATABASE = "DELETE_BOT_DATABASE",
-  BOT_DATABASE_LOG = "BOT_DATABASE_LOG",
   UNBAN = "UNBAN",
   BOARD_EVENT = "BOARD_EVENT",
   CLEAR_BOARD = "CLEAR_BOARD",
@@ -139,89 +136,10 @@ export enum Transfer {
   PRELOAD_MAPS = "PRELOAD_MAPS",
   NPC_DIALOG = "NPC_DIALOG",
   DELETE_ACCOUNT = "DELETE_ACCOUNT",
-  HEAP_SNAPSHOT = "HEAP_SNAPSHOT"
+  HEAP_SNAPSHOT = "HEAP_SNAPSHOT",
+  RECONNECT_PROMPT = "RECONNECT_PROMPT",
+  OVERWRITE_BOARD = "OVERWRITE_BOARD"
 }
-
-export enum AttackSprite {
-  BUG_MELEE = "BUG/melee",
-  BUG_RANGE = "BUG/range",
-  DARK_MELEE = "DARK/melee",
-  DARK_RANGE = "DARK/range",
-  DRAGON_MELEE = "DRAGON/melee",
-  DRAGON_RANGE = "DRAGON/range",
-  DRAGON_GREEN_RANGE = "DRAGON_GREEN/range",
-  ELECTRIC_MELEE = "ELECTRIC/melee",
-  ELECTRIC_RANGE = "ELECTRIC/range",
-  FAIRY_MELEE = "FAIRY/melee",
-  FAIRY_RANGE = "FAIRY/range",
-  FIGHTING_MELEE = "FIGHTING/melee",
-  FIGHTING_RANGE = "FIGHTING/range",
-  FIRE_MELEE = "FIRE/melee",
-  FIRE_RANGE = "FIRE/range",
-  FLYING_MELEE = "FLYING/melee",
-  FLYING_RANGE = "FLYING/range",
-  GHOST_MELEE = "GHOST/melee",
-  GHOST_RANGE = "GHOST/range",
-  GRASS_MELEE = "GRASS/melee",
-  GRASS_RANGE = "GRASS/range",
-  GROUND_MELEE = "GROUND/melee",
-  ICE_MELEE = "ICE/melee",
-  ICE_RANGE = "ICE/range",
-  NORMAL_MELEE = "NORMAL/melee",
-  POISON_MELEE = "POISON/melee",
-  POISON_RANGE = "POISON/range",
-  PSYCHIC_MELEE = "PSYCHIC/melee",
-  PSYCHIC_RANGE = "PSYCHIC/range",
-  WATER_MELEE = "WATER/melee",
-  WATER_RANGE = "WATER/range",
-  ROCK_MELEE = "ROCK/melee",
-  ROCK_RANGE = "ROCK/range",
-  SOUND_RANGE = "SOUND/range",
-  STEEL_MELEE = "STEEL/melee",
-  STEEL_RANGE = "STEEL/range",
-  WILD_MELEE = "WILD/melee"
-}
-
-export const AttackSpriteScale: { [sprite in AttackSprite]: [number, number] } =
-  {
-    "BUG/melee": [1.5, 1.5],
-    "BUG/range": [2, 2],
-    "DARK/melee": [1.5, 1.5],
-    "DARK/range": [1.5, 1.5],
-    "DRAGON/melee": [2, 2],
-    "DRAGON/range": [2, 2],
-    "DRAGON_GREEN/range": [2, 2],
-    "ELECTRIC/melee": [1.5, 1.5],
-    "ELECTRIC/range": [2, 2],
-    "FAIRY/melee": [2, 2],
-    "FAIRY/range": [2, 2],
-    "FIGHTING/melee": [2, 2],
-    "FIGHTING/range": [2, 2],
-    "FIRE/melee": [1, 1],
-    "FIRE/range": [2, 2],
-    "FLYING/melee": [1, 1],
-    "FLYING/range": [1.5, 1.5],
-    "GHOST/melee": [1, 1],
-    "GHOST/range": [2, 2],
-    "GRASS/melee": [1, 1],
-    "GRASS/range": [3, 3],
-    "GROUND/melee": [1, 1],
-    "ICE/melee": [2, 2],
-    "ICE/range": [2, 2],
-    "NORMAL/melee": [2, 2],
-    "POISON/melee": [2, 2],
-    "POISON/range": [1, 1],
-    "PSYCHIC/melee": [1.5, 1.5],
-    "PSYCHIC/range": [2, 2],
-    "ROCK/melee": [1.5, 1.5],
-    "ROCK/range": [2, 2],
-    "STEEL/melee": [1.5, 1.5],
-    "STEEL/range": [2, 2],
-    "SOUND/range": [2, 2],
-    "WATER/melee": [2, 2],
-    "WATER/range": [3, 3],
-    "WILD/melee": [2, 2]
-  }
 
 export enum ReadWriteMode {
   WRITE = "WRITE",
@@ -229,9 +147,9 @@ export enum ReadWriteMode {
 }
 
 export interface ICreditName {
-  Contact: string
-  Discord: string
-  Name: string
+  contact: string
+  discord: string
+  name: string
 }
 
 export interface IChatV2 {
@@ -256,8 +174,8 @@ export interface IDragDropMessage {
 }
 
 export interface IDragDropItemMessage {
-  x: number
-  y: number
+  zone: string
+  index: number
   id: Item
 }
 
@@ -286,6 +204,7 @@ export interface IGameState extends Schema {
 
 export interface ISimplePlayer {
   elo: number
+  games: number
   name: string
   id: string
   rank: number
@@ -319,6 +238,8 @@ export interface IPokemonAvatar {
   x: number
   y: number
   action: PokemonActionState
+  portalId: string
+  itemId: string
 }
 
 export interface IFloatingItem {
@@ -339,6 +260,7 @@ export interface ISynergySymbol {
   x: number
   y: number
   synergy: Synergy
+  portalId: string
 }
 
 export interface IPlayer {
@@ -373,6 +295,11 @@ export interface IPlayer {
   itemsProposition: ArraySchema<Item>
   pokemonsProposition: ArraySchema<PkmProposition>
   loadingProgress: number
+  berryTreesStages: number[]
+  flowerPots: Pokemon[]
+  flowerPotsSpawnOrder: FlowerPot[]
+  mulch: number
+  mulchCap: number
   effects: Effects
   isBot: boolean
   map: DungeonPMDO | "town"
@@ -390,6 +317,7 @@ export interface IPlayer {
   wildChance: number
   eggChance: number
   goldenEggChance: number
+  cellBattery: number
   lightX: number
   lightY: number
 }
@@ -405,23 +333,27 @@ export interface IPokemon {
   evolutionRule: EvolutionRule
   positionX: number
   positionY: number
-  attackSprite: AttackSprite
   speed: number
   def: number
   speDef: number
-  attackType: AttackType
   atk: number
   hp: number
+  maxHP: number
+  shield: number
   range: number
   stars: number
+  pp: number
   maxPP: number
   luck: number
-  permanentLuck: number
   ap: number
+  critChance: number
+  critPower: number
+  stacks: number
+  stacksRequired: number
   skill: Ability
   passive: Passive
   items: SetSchema<Item>
-  meal: Item | ""
+  dishes: SetSchema<Item>
   tm: Ability | null
   shiny: boolean
   emotion: Emotion
@@ -431,8 +363,11 @@ export interface IPokemon {
   canBePlaced: boolean
   canBeCloned: boolean
   canHoldItems: boolean
+  canEat: boolean
   deathCount: number
+  killCount: number
   readonly hasEvolution: boolean
+  supercharged: boolean
 }
 
 export interface IExperienceManager {
@@ -444,10 +379,13 @@ export interface IExperienceManager {
 
 export interface ISimulation {
   room: GameRoom
+  board: Board
   id: string
   weather: Weather
-  blueEffects: Set<Effect>
-  redEffects: Set<Effect>
+  bluePlayer: IPlayer | undefined
+  redPlayer: IPlayer | undefined
+  blueEffects: Set<EffectEnum>
+  redEffects: Set<EffectEnum>
   blueTeam: MapSchema<IPokemonEntity>
   redTeam: MapSchema<IPokemonEntity>
   blueDpsMeter: MapSchema<Dps>
@@ -486,16 +424,11 @@ export interface IDps {
   shield: number
 }
 
-export function instanceofPokemonEntity(
-  obj: IPokemon | IPokemonEntity | IPokemonAvatar
-): obj is IPokemonEntity {
-  return "pp" in obj
-}
-
 export interface IPokemonEntity {
   simulation: ISimulation
   refToBoardPokemon: IPokemon
   get player(): IPlayer | undefined
+  broadcastAbility(options: any): void
   applyStat(stat: Stat, value: number): void
   addAbilityPower(
     value: number,
@@ -582,6 +515,12 @@ export interface IPokemonEntity {
   skydiveTo(x: number, y: number, board: Board): void
   toIdleState(): void
   toMovingState(): void
+  isTargettableBy(
+    attacker: IPokemonEntity,
+    targetEnemies?: boolean,
+    targetAllies?: boolean
+  ): boolean
+  setTarget(target: IPokemonEntity | null): void
   physicalDamage: number
   specialDamage: number
   trueDamage: number
@@ -596,28 +535,28 @@ export interface IPokemonEntity {
   id: string
   orientation: Orientation
   critChance: number
-  hp: number
+  maxHP: number
   pp: number
   maxPP: number
   atk: number
   def: number
   speDef: number
   luck: number
+  baseTeam: Team
   baseAtk: number
   baseDef: number
   baseSpeDef: number
-  attackType: AttackType
-  life: number
+  hp: number
   shield: number
   team: number
   range: number
   speed: number
   targetX: number
   targetY: number
-  attackSprite: AttackSprite
+  targetEntityId: string
   rarity: Rarity
   name: Pkm
-  effects: SetSchema<Effect>
+  effects: SetSchema<EffectEnum>
   items: SetSchema<Item>
   types: SetSchema<Synergy>
   stars: number
@@ -630,10 +569,11 @@ export interface IPokemonEntity {
   healDone: number
   shiny: boolean
   emotion: Emotion
-  isClone: boolean
+  stacks: number
+  stacksRequired: number
+  isSpawn: boolean
   commands: ISimulationCommand[]
   effectsSet: Set<EffectClass>
-  flyingProtection: number
   inSpotlight: boolean
 }
 
@@ -647,11 +587,12 @@ export interface IStatus {
   sleep: boolean
   confusion: boolean
   wound: boolean
-  resurection: boolean
-  resurecting: boolean
+  resurrection: boolean
+  resurrecting: boolean
   paralysis: boolean
   pokerus: boolean
   locked: boolean
+  possessed: boolean
   blinded: boolean
   armorReduction: boolean
   runeProtect: boolean
@@ -669,21 +610,20 @@ export interface ICount {
   attackCount: number
   fightingBlockCount: number
   dodgeCount: number
-  powerLensCount: number
   starDustCount: number
   tripleAttackCount: number
   staticHolderCount: number
-  defensiveRibbonCount: number
+  muscleBandCount: number
+  machRibbonCount: number
   spellBlockedCount: number
   manaBurnCount: number
   moneyCount: number
-  magmarizerCount: number
 }
 
 export interface IPreparationMetadata {
   name: string
   ownerName: string
-  password: string | null
+  passwordProtected: boolean
   noElo: boolean
   type: "preparation"
   gameStartedAt: string | null
@@ -746,7 +686,7 @@ export enum Title {
   ELECTRICIAN = "ELECTRICIAN",
   GEOLOGIST = "GEOLOGIST",
   MYTH_TRAINER = "MYTH_TRAINER",
-  DIVER = "DIVER",
+  SURFER = "SURFER",
   POKEMON_RANGER = "POKEMON_RANGER",
   CAMPER = "CAMPER",
   RIVAL = "RIVAL",
@@ -758,11 +698,13 @@ export enum Title {
   ALCHEMIST = "ALCHEMIST",
   BERSERKER = "BERSERKER",
   BLOB = "BLOB",
+  CHEF = "CHEF",
   HARLEQUIN = "HARLEQUIN",
   TACTICIAN = "TACTICIAN",
   STRATEGIST = "STRATEGIST",
   NURSE = "NURSE",
   GARDIAN = "GARDIAN",
+  COLLECTOR = "COLLECTOR",
   DUKE = "DUKE",
   DUCHESS = "DUCHESS",
   CHAMPION = "CHAMPION",
@@ -781,17 +723,31 @@ export enum Title {
   PRIMAL = "PRIMAL",
   DENTIST = "DENTIST",
   FISHERMAN = "FISHERMAN",
+  MOLE = "MOLE",
+  BLOSSOMED = "BLOSSOMED",
   SIREN = "SIREN",
   FEARSOME = "FEARSOME",
   GOLDEN = "GOLDEN",
+  LUCKY = "LUCKY",
+  GIANT = "GIANT",
+  DECURION = "DECURION",
+  LEGEND = "LEGEND",
   CHOSEN_ONE = "CHOSEN_ONE",
   ANNIHILATOR = "ANNIHILATOR",
   VANQUISHER = "VANQUISHER",
   OUTSIDER = "OUTSIDER",
   GLUTTON = "GLUTTON",
+  PICNICKER = "PICNICKER",
   STARGAZER = "STARGAZER",
   BLOODY = "BLOODY",
-  ETERNAL = "ETERNAL"
+  ETERNAL = "ETERNAL",
+  RUNNER = "RUNNER",
+  FINISHER = "FINISHER",
+  VICTORIOUS = "VICTORIOUS",
+  AQUARIOPHILE = "AQUARIOPHILE",
+  POFFIN_MASTER = "POFFIN_MASTER",
+  TOP_GUN = "TOP_GUN",
+  SCOUT = "SCOUT"
 }
 
 export interface IBoardEvent {
@@ -809,3 +765,5 @@ export interface IAttackEvent {
   travelTime: number
   delay: number
 }
+
+export { AttackSprite }

@@ -12,7 +12,6 @@ import {
   PkmIndex
 } from "../../../../../types/enum/Pokemon"
 import { Synergy } from "../../../../../types/enum/Synergy"
-import { getPortraitSrc } from "../../../../../utils/avatar"
 import PokemonPortrait from "../pokemon-portrait"
 
 export default function PokemonStatistic(props: {
@@ -20,6 +19,8 @@ export default function PokemonStatistic(props: {
   rankingBy: string
   synergy: Synergy | "all"
   rarity: Rarity | "all"
+  pool: string
+  tier: string
   selectedPkm: string
 }) {
   const { t } = useTranslation()
@@ -34,14 +35,12 @@ export default function PokemonStatistic(props: {
   const duos = Object.values(PkmDuos)
 
   const filteredPokemons = props.pokemons.filter(
-    (v) =>
-      (props.synergy === "all"
-        ? v
-        : PRECOMPUTED_POKEMONS_PER_TYPE[props.synergy].includes(v.name)) &&
-      (props.rarity === "all"
-        ? v
-        : PRECOMPUTED_POKEMONS_PER_RARITY[props.rarity].includes(v.name)) &&
-      (props.selectedPkm === "" || v.name === props.selectedPkm)
+    (p) =>
+      hasType(p, props.synergy) &&
+      hasRarity(p, props.rarity) &&
+      isInPool(p, props.pool) &&
+      (props.tier === "all" || getPokemonData(p.name).stars === +props.tier) &&
+      (props.selectedPkm === "" || p.name === props.selectedPkm)
   )
 
   filteredPokemons.forEach((pokemon) => {
@@ -85,7 +84,7 @@ export default function PokemonStatistic(props: {
   return (
     <article>
       {familiesArray.map(([pkm, family], i) => (
-        <div key={pkm} className="my-box pokemon-family-stat">
+        <div key={"family." + pkm} className="my-box pokemon-family-stat">
           <span className="rank">{i + 1}</span>
 
           <ul
@@ -95,8 +94,8 @@ export default function PokemonStatistic(props: {
               justifyContent: "space-between"
             }}
           >
-            {family.pokemons.map((pokemon, i) => (
-              <li key={pokemon.name}>
+            {family.pokemons.map((pokemon) => (
+              <li key={pokemon.name + "-portrait"}>
                 <PokemonPortrait portrait={PkmIndex[pokemon.name]} />
                 <span>{t(`pkm.${pokemon.name}`)}</span>
               </li>
@@ -104,18 +103,25 @@ export default function PokemonStatistic(props: {
           </ul>
 
           <span>
-            <label>{t("average_place")}:</label><br />
-            <span style={{ fontSize: "140%" }}>{family.averageRank ? family.averageRank.toFixed(1) : "???"}</span>
+            <label>{t("average_place")}:</label>
+            <br />
+            <span style={{ fontSize: "140%" }}>
+              {family.averageRank ? family.averageRank.toFixed(1) : "???"}
+            </span>
           </span>
 
           <span>
-            <label>{t("count")}:</label><br />
+            <label>{t("count")}:</label>
+            <br />
             <span style={{ fontSize: "140%" }}>{family.totalCount}</span>
           </span>
 
           <span>
-            <label>{t("held_items")}:</label><br />
-            <span style={{ fontSize: "140%" }}>{family.averageItemHeld?.toFixed(2)}</span>
+            <label>{t("held_items")}:</label>
+            <br />
+            <span style={{ fontSize: "140%" }}>
+              {family.averageItemHeld?.toFixed(2)}
+            </span>
           </span>
 
           <ul
@@ -127,7 +133,7 @@ export default function PokemonStatistic(props: {
           >
             {family.pokemons.map((pokemon) => (
               <li
-                key={pokemon.name}
+                key={pokemon.name + "-details"}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "40px 6ch 1fr 1.5fr 2fr"
@@ -147,7 +153,7 @@ export default function PokemonStatistic(props: {
                   <label>{t("popular_items")}:</label>
                   {pokemon.items.map((item) => (
                     <img
-                      key={item}
+                      key={pokemon.name + "-item-" + item}
                       src={"assets/item/" + item + ".png"}
                       style={{
                         height: "32px",
@@ -186,4 +192,32 @@ function computeAverageItemHeld(pokemons: IPokemonsStatistic[]): number | null {
       0
     ) / pokemonsPlayedAtLeastOnce.reduce((prev, curr) => prev + curr.count, 0)
   )
+}
+
+function isInPool(pokemon: IPokemonsStatistic, pool: string): boolean {
+  if (pool === "all") return true
+  const data = getPokemonData(pokemon.name)
+  if (pool === "special") return data.rarity === Rarity.SPECIAL
+  if (pool === "additional") return data.additional
+  if (pool === "regional") return data.regional
+  if (pool === "regular")
+    return !data.additional && !data.regional && data.rarity !== Rarity.SPECIAL
+  return false
+}
+
+function hasType(
+  pokemon: IPokemonsStatistic,
+  synergy: Synergy | "all"
+): boolean {
+  if (synergy === "all") return true
+  const types = PRECOMPUTED_POKEMONS_PER_TYPE[synergy]
+  return types.includes(pokemon.name)
+}
+
+function hasRarity(
+  pokemon: IPokemonsStatistic,
+  rarity: Rarity | "all"
+): boolean {
+  if (rarity === "all") return true
+  return PRECOMPUTED_POKEMONS_PER_RARITY[rarity].includes(pokemon.name)
 }

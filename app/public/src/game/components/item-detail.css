@@ -1,6 +1,6 @@
 .game-item-detail {
   min-width: 200px;
-  max-width: 400px;
+  max-width: 440px;
   color: white;
   display: grid;
   font-size: 1.2rem;
@@ -20,6 +20,7 @@
   width: 45px;
   height: 45px;
   align-self: center;
+  image-rendering: pixelated;
   object-fit: contain;
   grid-area: icon;
 }
@@ -33,11 +34,13 @@
 
 .game-item-recipe {
   float: right;
+  margin-left: 0.5em;
 }
 
 .game-item-recipe img {
   width: 22.5px;
   height: 22.5px;
+  image-rendering: pixelated;
   object-fit: contain;
 }
 
@@ -50,6 +53,11 @@
   align-items: center;
   line-height: 1;
   min-height: 15px;
+}
+
+.game-item-detail-stats > i {
+  color: #a0a0a0;
+  font-style: italic;
 }
 
 .game-item-detail-stats > div {
@@ -84,7 +92,6 @@
   justify-content: space-between;
   grid-area: combinations;
   gap: 0.5em;
-  min-width: 320px;
 }
 
 .game-item-detail-combination {

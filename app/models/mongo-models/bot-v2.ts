@@ -1,4 +1,4 @@
-import { Schema, model } from "mongoose"
+import { model, Schema } from "mongoose"
 import { nanoid } from "nanoid"
 import { Emotion, PkmWithCustom } from "../../types"
 import { Item } from "../../types/enum/Item"
@@ -25,7 +25,10 @@ export interface IBot {
   steps: IStep[]
   name: string
   id: string
+  approved: boolean
 }
+
+export type IBotLight = Omit<IBot, "steps"> & { valid: boolean }
 
 const pkm = new Schema({
   name: {
@@ -77,6 +80,10 @@ const bot = new Schema(
       required: true,
       default: nanoid()
     },
+    approved: {
+      type: Boolean,
+      default: false
+    },
     name: {
       type: String
     },
@@ -96,7 +103,7 @@ const bot = new Schema(
   },
   {
     toJSON: {
-      transform: function (doc, ret) {
+      transform: function (doc, ret: any) {
         delete ret._id
         delete ret.__v
         if (ret.steps)

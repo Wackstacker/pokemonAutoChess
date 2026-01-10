@@ -1,6 +1,6 @@
 import { Schema, type } from "@colyseus/schema"
+import { ExpTable } from "../../config"
 import { IExperienceManager } from "../../types"
-import { ExpTable } from "../../types/Config"
 import { SpecialGameRule } from "../../types/enum/SpecialGameRule"
 
 export default class ExperienceManager
@@ -20,7 +20,7 @@ export default class ExperienceManager
     this.maxLevel = 9
   }
 
-  canLevel() {
+  canLevelUp() {
     return this.level < this.maxLevel
   }
 

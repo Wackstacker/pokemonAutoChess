@@ -1,44 +1,55 @@
+import { matchMaker } from "colyseus"
 import { CronJob } from "cron"
 import dayjs from "dayjs"
 import admin from "firebase-admin"
 import { UserRecord } from "firebase-admin/lib/auth/user-record"
-import { logger } from "../utils/logger"
-import UserMetadata from "../models/mongo-models/user-metadata"
-import DetailledStatistic from "../models/mongo-models/detailled-statistic-v2"
-import TitleStatistic from "../models/mongo-models/title-statistic"
-import History from "../models/mongo-models/history"
-import { Title } from "../types"
 import {
   CRON_ELO_DECAY_DELAY,
   CRON_ELO_DECAY_MINIMUM_ELO,
-  CRON_HISTORY_CLEANUP_DELAY
-} from "../types/Config"
+  CRON_HISTORY_CLEANUP_DELAY,
+  ELO_DECAY_LOST_PER_DAY,
+  EloRankThreshold
+} from "../config"
+import DetailledStatistic from "../models/mongo-models/detailled-statistic-v2"
+import TitleStatistic from "../models/mongo-models/title-statistic"
+import UserMetadata from "../models/mongo-models/user-metadata"
+import { Title } from "../types"
+import { EloRank } from "../types/enum/EloRank"
+import { GameMode } from "../types/enum/Game"
+import { logger } from "../utils/logger"
+import { min } from "../utils/number"
 
 export function initCronJobs() {
   logger.debug("init cron jobs")
 
+  // CronJob.from({
+  //   cronTime: "0 8 * * *", // every day at 8am
+  //   timeZone: "Europe/Paris",
+  //   onTick: () => deleteOldAnonymousAccounts(),
+  //   start: true
+  // })
   CronJob.from({
-    cronTime: "0 22 * * *", // every day at 8am
-    timeZone: "Europe/Paris",
-    onTick: () => deleteOldAnonymousAccounts(),
-    start: true
-  })
-  CronJob.from({
-    cronTime: "5 22 * * *", // every day at 8:05am
+    cronTime: "15 8 * * *", // every day at 8:15am
     timeZone: "Europe/Paris",
     onTick: () => deleteOldHistory(),
     start: true
   })
   CronJob.from({
-    cronTime: "10 22 * * *", // every day at 8:10am
+    cronTime: "30 8 * * *", // every day at 8:30am
     timeZone: "Europe/Paris",
     onTick: () => eloDecay(),
     start: true
   })
   CronJob.from({
-    cronTime: "15 22 * * *", // every day at 8:15am
+    cronTime: "45 8 * * *", // every day at 8:45am
     timeZone: "Europe/Paris",
     onTick: () => titleStats(),
+    start: true
+  })
+  CronJob.from({
+    cronTime: "0 0 1 * *", // at midnight UTC on the first day of each month
+    timeZone: "UTC",
+    onTick: () => resetEventScores(),
     start: true
   })
 }
@@ -101,30 +112,30 @@ async function eloDecay() {
     for (let i = 0; i < users.length; i++) {
       const u = users[i]
       const stats = await DetailledStatistic.find(
-        { playerId: u.uid },
+        {
+          playerId: u.uid,
+          ...(u.elo >= EloRankThreshold[EloRank.ULTRA_BALL]
+            ? { gameMode: GameMode.RANKED }
+            : {})
+        },
         ["time"],
         {
-          limit: 1,
+          limit: 3,
           sort: { time: -1 }
         }
       )
-      const decay = Math.max(CRON_ELO_DECAY_MINIMUM_ELO, u.elo - 10)
-      if (stats && stats.length > 0) {
-        const time = stats[0].time
-        if (time) {
-          const lastGame = new Date(time)
-          const now = new Date(Date.now())
-          if (now.getTime() - lastGame.getTime() > CRON_ELO_DECAY_DELAY) {
-            logger.info(
-              `User ${u.displayName} (${u.elo}) will decay to ${decay}`
-            )
-            u.elo = decay
-            await u.save()
-          }
-        }
-      } else {
-        logger.info(`User ${u.displayName} (${u.elo}) will decay to ${decay}`)
-        u.elo = decay
+
+      const shouldDecay =
+        stats.length < 3 || Date.now() - stats[2].time > CRON_ELO_DECAY_DELAY
+
+      if (shouldDecay) {
+        const eloAfterDecay = min(CRON_ELO_DECAY_MINIMUM_ELO)(
+          u.elo - ELO_DECAY_LOST_PER_DAY
+        )
+        logger.info(
+          `User ${u.displayName} (${u.elo}) will decay to ${eloAfterDecay}`
+        )
+        u.elo = eloAfterDecay
         await u.save()
       }
     }
@@ -152,9 +163,39 @@ async function deleteOldHistory() {
     time: { $lt: Date.now() - CRON_HISTORY_CLEANUP_DELAY }
   })
   logger.info(`${deleteResults.deletedCount} detailed statistics deleted`)
+}
 
-  const historyResults = await History.deleteMany({
-    startTime: { $lt: Date.now() - CRON_HISTORY_CLEANUP_DELAY }
-  })
-  logger.info(`${historyResults.deletedCount} game histories deleted`)
+async function resetEventScores() {
+  try {
+    logger.info("[CRON] Starting event scores reset...")
+
+    // Reset event-related fields for all users in a single operation
+    const result = await UserMetadata.updateMany(
+      {
+        $or: [
+          { eventPoints: { $gt: 0 } },
+          { maxEventPoints: { $gt: 0 } },
+          { eventFinishTime: { $ne: null } }
+        ]
+      },
+      {
+        $set: {
+          eventPoints: 0,
+          maxEventPoints: 0,
+          eventFinishTime: null
+        }
+      }
+    )
+
+    logger.info(
+      `Event reset completed! Reset event data for ${result.modifiedCount} users`
+    )
+
+    matchMaker.presence.publish(
+      "announcement",
+      "Victory Road has started! Be the first to reach the finish line!"
+    )
+  } catch (e) {
+    logger.error("Error during event reset scores:", e)
+  }
 }

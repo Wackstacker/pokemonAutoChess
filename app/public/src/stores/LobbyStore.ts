@@ -1,4 +1,4 @@
-import { PayloadAction, createSlice } from "@reduxjs/toolkit"
+import { createSlice, PayloadAction } from "@reduxjs/toolkit"
 import { RoomAvailable } from "colyseus.js"
 import Message from "../../../models/colyseus-models/message"
 import {
@@ -6,35 +6,33 @@ import {
   TournamentSchema
 } from "../../../models/colyseus-models/tournament"
 import {
-  IPokemonCollectionItem,
-  IUserMetadata
-} from "../../../models/mongo-models/user-metadata"
-import {
   IChatV2,
   IGameMetadata,
   IPreparationMetadata,
-  ISuggestionUser,
-  PkmWithCustom
+  ISuggestionUser
 } from "../../../types"
+import type { Booster } from "../../../types/Booster"
 import { Language } from "../../../types/enum/Language"
 import {
   ILeaderboardBotInfo,
+  ILeaderboardEventInfo,
   ILeaderboardInfo
 } from "../../../types/interfaces/LeaderboardInfo"
+import { IUserMetadataClient } from "../../../types/interfaces/UserMetadata"
 
 export interface IUserLobbyState {
-  botLogDatabase: string[]
   messages: IChatV2[]
   leaderboard: ILeaderboardInfo[]
   botLeaderboard: ILeaderboardBotInfo[]
   levelLeaderboard: ILeaderboardInfo[]
-  user: IUserMetadata | undefined
-  searchedUser: IUserMetadata | undefined
+  eventLeaderboard: ILeaderboardEventInfo[]
+  user: IUserMetadataClient | undefined
+  searchedUser: IUserMetadataClient | undefined
   tabIndex: number
   preparationRooms: RoomAvailable[]
   gameRooms: RoomAvailable[]
-  pokemonCollection: IPokemonCollectionItem[]
-  boosterContent: PkmWithCustom[]
+  boosterContent: Booster
+  lastBoostersOpened: Booster[]
   suggestions: ISuggestionUser[]
   language: Language
   tournaments: TournamentSchema[]
@@ -43,14 +41,14 @@ export interface IUserLobbyState {
 
 const initialState: IUserLobbyState = {
   language: Language.en,
-  botLogDatabase: [],
   suggestions: [],
   boosterContent: [],
-  pokemonCollection: [],
+  lastBoostersOpened: [],
   messages: [],
   leaderboard: [],
   botLeaderboard: [],
   levelLeaderboard: [],
+  eventLeaderboard: [],
   user: undefined,
   tabIndex: 0,
   preparationRooms: [],
@@ -64,9 +62,6 @@ export const lobbySlice = createSlice({
   name: "lobby",
   initialState: initialState,
   reducers: {
-    pushBotLog: (state, action: PayloadAction<string>) => {
-      state.botLogDatabase.push(action.payload)
-    },
     pushMessage: (state, action: PayloadAction<Message>) => {
       state.messages.push(structuredClone(action.payload))
     },
@@ -87,18 +82,11 @@ export const lobbySlice = createSlice({
     setLevelLeaderboard: (state, action: PayloadAction<ILeaderboardInfo[]>) => {
       state.levelLeaderboard = action.payload
     },
-    changePokemonCollectionItem: (
+    setEventLeaderboard: (
       state,
-      action: PayloadAction<{ id: string; field: string; value: any }>
+      action: PayloadAction<ILeaderboardEventInfo[]>
     ) => {
-      const index = state.pokemonCollection.findIndex(
-        (p) => p.id === action.payload.id
-      )
-      const clonedCollection = [...state.pokemonCollection]
-      if (index !== -1) {
-        clonedCollection[index][action.payload.field] = action.payload.value
-        state.pokemonCollection = clonedCollection
-      }
+      state.eventLeaderboard = action.payload
     },
     setTabIndex: (state, action: PayloadAction<number>) => {
       state.tabIndex = action.payload
@@ -134,13 +122,17 @@ export const lobbySlice = createSlice({
     },
     setSearchedUser: (
       state,
-      action: PayloadAction<IUserMetadata | undefined>
+      action: PayloadAction<IUserMetadataClient | undefined>
     ) => {
       state.searchedUser = action.payload
       state.suggestions = []
     },
-    setBoosterContent: (state, action: PayloadAction<PkmWithCustom[]>) => {
+    setBoosterContent: (state, action: PayloadAction<Booster>) => {
       state.boosterContent = action.payload
+      state.lastBoostersOpened.push([...action.payload])
+    },
+    resetLastBoostersOpened: (state) => {
+      state.lastBoostersOpened = []
     },
     setSuggestions: (state, action: PayloadAction<ISuggestionUser[]>) => {
       state.suggestions = action.payload
@@ -246,11 +238,12 @@ export const lobbySlice = createSlice({
 export const {
   removeMessage,
   setBoosterContent,
-  changePokemonCollectionItem,
+  resetLastBoostersOpened,
   pushMessage,
   setLeaderboard,
   setBotLeaderboard,
   setLevelLeaderboard,
+  setEventLeaderboard,
   setTabIndex,
   addRoom,
   removeRoom,
@@ -258,7 +251,6 @@ export const {
   setSearchedUser,
   resetLobby,
   setSuggestions,
-  pushBotLog,
   addTournament,
   removeTournament,
   changeTournament,

@@ -1,26 +1,24 @@
-import React, { useState } from "react"
-import ReactDOM from "react-dom"
+import React, { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Tab, TabList, TabPanel, Tabs } from "react-tabs"
-import SynergyIcon from "../icons/synergy-icon"
-import { Tooltip } from "react-tooltip"
+import { RarityColor, SynergyTriggers } from "../../../../../config"
 import { SynergyEffects } from "../../../../../models/effects"
 import { getPokemonData } from "../../../../../models/precomputed/precomputed-pokemon-data"
 import { PRECOMPUTED_POKEMONS_PER_TYPE } from "../../../../../models/precomputed/precomputed-types"
-import { RarityColor, SynergyTriggers } from "../../../../../types/Config"
 import { Ability } from "../../../../../types/enum/Ability"
 import { Rarity } from "../../../../../types/enum/Game"
 import { Pkm, PkmFamily } from "../../../../../types/enum/Pokemon"
-import { Synergy } from "../../../../../types/enum/Synergy"
+import { Synergy, SynergyArray } from "../../../../../types/enum/Synergy"
 import { IPokemonData } from "../../../../../types/interfaces/PokemonData"
 import { groupBy } from "../../../../../utils/array"
 import { getPortraitSrc } from "../../../../../utils/avatar"
+import { usePreferences } from "../../../preferences"
 import { addIconsToDescription } from "../../utils/descriptions"
 import { cc } from "../../utils/jsx"
-import { GamePokemonDetail } from "../game/game-pokemon-detail"
-import { EffectDescriptionComponent } from "../synergy/effect-description"
 import { Checkbox } from "../checkbox/checkbox"
-import { usePreference } from "../../../preferences"
+import { GamePokemonDetailTooltip } from "../game/game-pokemon-detail"
+import SynergyIcon from "../icons/synergy-icon"
+import { EffectDescriptionComponent } from "../synergy/effect-description"
 
 export default function WikiTypes() {
   const { t } = useTranslation()
@@ -52,9 +50,8 @@ export default function WikiTypes() {
 }
 
 export function WikiType(props: { type: Synergy }) {
-  const [antialiasing] = usePreference('antialiasing')
   const { t } = useTranslation()
-  const [showEvolutions, setShowEvolutions] = useState(false)
+  const [preferences, setPreferences] = usePreferences()
   const [overlap, setOverlap] = useState<Synergy | null>(null)
 
   const pokemons = PRECOMPUTED_POKEMONS_PER_TYPE[props.type]
@@ -64,47 +61,69 @@ export function WikiType(props: { type: Synergy }) {
     .filter((p, index, list) => {
       if (p.skill === Ability.DEFAULT) return false // pokemons with no ability are not ready for the show
       if (p.rarity === Rarity.SPECIAL) return true // show all summons & specials, even in the same family
-      if (showEvolutions) return true
-
-      // remove if already one member of family in the list
-      else return (
-        list.findIndex((p2) => PkmFamily[p.name] === PkmFamily[p2.name]) === index
+      if (preferences.showEvolutions) return true
+      const prevolution = list.find(
+        (p2) =>
+          p2.evolution === p.name ||
+          p2.evolutions.includes(p.name) ||
+          (PkmFamily[p2.name] === PkmFamily[p.name] && p2.stars < p.stars) // for transformations
       )
+      // if show evolutions is unchecked, do not show a pokemon if it has a prevolution and that prevolution is in the same rarity category
+      if (prevolution && prevolution.rarity === p.rarity) return false
+      return true
     })
 
-  const filteredPokemons = pokemons
-    .filter(p => overlap ? p.types.includes(overlap) : true)
+  const filteredPokemons = pokemons.filter((p) =>
+    overlap ? p.types.includes(overlap) : true
+  )
 
   const pokemonsPerRarity = groupBy(filteredPokemons, (p) => p.rarity)
   for (const rarity in pokemonsPerRarity) {
-    const families = groupBy(pokemonsPerRarity[rarity as Rarity], (p) => PkmFamily[p.name])
-    pokemonsPerRarity[rarity] = Object.values(families).sort((fa, fb) => {
-      const a = fa[0], b = fb[0]
-      if (a.regional !== b.regional) return +a.regional - +b.regional
-      if (a.additional !== b.additional) return +a.additional - +b.additional
-      return a.index.localeCompare(b.index)
-    }).flat().sort((a, b) => {
-      if (PkmFamily[a.name] === PkmFamily[b.name]) return a.stars - b.stars
-      return 0
-    })
+    const families = groupBy(
+      pokemonsPerRarity[rarity as Rarity],
+      (p) => PkmFamily[p.name]
+    )
+    pokemonsPerRarity[rarity] = Object.values(families)
+      .sort((fa, fb) => {
+        const a = fa[0],
+          b = fb[0]
+        if (a.regional !== b.regional) return +a.regional - +b.regional
+        if (a.additional !== b.additional) return +a.additional - +b.additional
+        return a.index.localeCompare(b.index)
+      })
+      .flat()
+      .sort((a, b) => {
+        if (PkmFamily[a.name] === PkmFamily[b.name]) return a.stars - b.stars
+        return 0
+      })
   }
 
   const overlapsMap = new Map(
-    Object.values(Synergy)
-      .filter(type => type !== props.type)
-      .map(type => [type, pokemons.filter((p, i, list) => p.types.includes(type) &&
-        list.findIndex((q) => q.types.includes(type) && PkmFamily[p.name] === PkmFamily[q.name]) === i
-      ).length])
+    SynergyArray.filter((type) => type !== props.type).map((type) => [
+      type,
+      pokemons
+        .filter((p) => p.types.includes(type))
+        .filter(
+          (p, i, list) =>
+            list.findIndex((q) => PkmFamily[p.name] === PkmFamily[q.name]) === i
+        ).length
+    ])
   )
 
-  const overlaps = [...overlapsMap.entries()].filter(([type, nb]) => nb > 0).sort((a, b) => b[1] - a[1])
+  const overlaps = [...overlapsMap.entries()]
+    .filter(([type, nb]) => nb > 0)
+    .sort((a, b) => b[1] - a[1])
 
   return (
     <div style={{ padding: "0 1em" }}>
       <h2>
         <SynergyIcon type={props.type} /> {t(`synergy.${props.type}`)}
       </h2>
-      <p>{addIconsToDescription(t(`synergy_description.${props.type}`, { additionalInfo: "" }))}</p>
+      <p>
+        {addIconsToDescription(
+          t(`synergy_description.${props.type}`, { additionalInfo: "" })
+        )}
+      </p>
       {SynergyEffects[props.type].map((effect, i) => {
         return (
           <div
@@ -123,8 +142,10 @@ export function WikiType(props: { type: Synergy }) {
       <hr />
       <div style={{ float: "right", justifyItems: "end" }}>
         <Checkbox
-          checked={showEvolutions}
-          onToggle={setShowEvolutions}
+          checked={preferences.showEvolutions}
+          onToggle={(checked) => {
+            setPreferences({ showEvolutions: checked })
+          }}
           label={t("show_evolutions")}
           isDark
         />
@@ -132,11 +153,17 @@ export function WikiType(props: { type: Synergy }) {
           <summary style={{ textAlign: "end" }}>{t("overlaps")}</summary>
           <ul className="synergy-overlaps">
             {overlaps.map(([type, nb]) => {
-              return <li onClick={() => setOverlap(overlap === type ? null : type)} key={type} className={cc({ active: overlap === type })}>
-                <SynergyIcon type={props.type} />
-                <SynergyIcon type={type} />
-                <span>{nb}</span>
-              </li>
+              return (
+                <li
+                  onClick={() => setOverlap(overlap === type ? null : type)}
+                  key={type}
+                  className={cc({ active: overlap === type })}
+                >
+                  <SynergyIcon type={props.type} />
+                  <SynergyIcon type={type} />
+                  <span>{nb}</span>
+                </li>
+              )
             })}
           </ul>
         </details>
@@ -161,15 +188,9 @@ export function WikiType(props: { type: Synergy }) {
                       >
                         <img
                           src={getPortraitSrc(p.index)}
-                          data-tooltip-id={`pokemon-detail-${p.index}`}
-                          className={cc({ pixelated: !antialiasing })}
+                          data-tooltip-id="game-pokemon-detail-tooltip"
+                          data-tooltip-content={p.name}
                         />
-                        {ReactDOM.createPortal(<Tooltip
-                          id={`pokemon-detail-${p.index}`}
-                          className="custom-theme-tooltip game-pokemon-detail-tooltip"
-                        >
-                          <GamePokemonDetail pokemon={p.name} />
-                        </Tooltip>, document.querySelector(".wiki-modal")!)}
                       </div>
                     )
                   })}
@@ -179,12 +200,23 @@ export function WikiType(props: { type: Synergy }) {
           })}
         </tbody>
       </table>
+      <GamePokemonDetailTooltip origin="wiki" />
     </div>
   )
 }
 
 export function WikiAllTypes() {
-  const rarityOrder = [Rarity.COMMON, Rarity.UNCOMMON, Rarity.RARE, Rarity.EPIC, Rarity.ULTRA, Rarity.HATCH, Rarity.UNIQUE, Rarity.LEGENDARY, Rarity.SPECIAL]
+  const rarityOrder = [
+    Rarity.COMMON,
+    Rarity.UNCOMMON,
+    Rarity.RARE,
+    Rarity.EPIC,
+    Rarity.ULTRA,
+    Rarity.HATCH,
+    Rarity.UNIQUE,
+    Rarity.LEGENDARY,
+    Rarity.SPECIAL
+  ]
   const pokemons = Object.values(Pkm)
     .filter((p) => p !== Pkm.DEFAULT)
     .map((p) => getPokemonData(p))
@@ -193,7 +225,9 @@ export function WikiAllTypes() {
       return true
     })
 
-  const pokemonsPerType = Object.fromEntries(Object.values(Synergy).map(type => [type as Synergy, [] as IPokemonData[]]))
+  const pokemonsPerType = Object.fromEntries(
+    SynergyArray.map((type) => [type as Synergy, [] as IPokemonData[]])
+  )
   for (const p of pokemons) {
     for (const type of p.types) {
       pokemonsPerType[type].push(p)
@@ -201,17 +235,19 @@ export function WikiAllTypes() {
   }
 
   for (const type in pokemonsPerType) {
-    pokemonsPerType[type].sort((a, b) => a.rarity !== b.rarity ? rarityOrder.indexOf(a.rarity) - rarityOrder.indexOf(b.rarity) : a.stars - b.stars) // put first stage first
+    pokemonsPerType[type].sort((a, b) =>
+      a.rarity !== b.rarity
+        ? rarityOrder.indexOf(a.rarity) - rarityOrder.indexOf(b.rarity)
+        : a.stars - b.stars
+    ) // put first stage first
   }
 
-  const [hoveredPokemon, setHoveredPokemon] = useState<Pkm>()
-  const [antialiasing] = usePreference('antialiasing')
   const { t } = useTranslation()
 
   return (
     <>
       <div id="wiki-types-all">
-        {(Object.values(Synergy) as Synergy[]).map((type) => {
+        {SynergyArray.map((type) => {
           return (
             <section key={type}>
               <h2>
@@ -226,15 +262,11 @@ export function WikiAllTypes() {
                         additional: p.additional,
                         regional: p.regional
                       })}
-                      onMouseOver={() => {
-                        setHoveredPokemon(p.name)
-                      }}
-                      data-tooltip-id="pokemon-detail"
                     >
                       <img
                         src={getPortraitSrc(p.index)}
-                        data-tooltip-id={`pokemon-detail-${p.index}`}
-                        className={cc({ pixelated: !antialiasing })}
+                        data-tooltip-id="game-pokemon-detail-tooltip"
+                        data-tooltip-content={p.name}
                       />
                     </li>
                   )
@@ -244,13 +276,7 @@ export function WikiAllTypes() {
           )
         })}
       </div>
-      {hoveredPokemon && ReactDOM.createPortal(<Tooltip
-        id="pokemon-detail"
-        className="custom-theme-tooltip game-pokemon-detail-tooltip"
-        float
-      >
-        <GamePokemonDetail pokemon={hoveredPokemon} />
-      </Tooltip>, document.querySelector(".wiki-modal")!)}
+      <GamePokemonDetailTooltip origin="wiki" />
     </>
   )
 }

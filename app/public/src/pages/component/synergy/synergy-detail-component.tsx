@@ -1,28 +1,28 @@
 import React from "react"
 import { useTranslation } from "react-i18next"
+import { RarityColor, RarityCost, SynergyTriggers } from "../../../../../config"
+import { SynergyEffects } from "../../../../../models/effects"
 import { getPokemonData } from "../../../../../models/precomputed/precomputed-pokemon-data"
 import { PRECOMPUTED_POKEMONS_PER_TYPE_AND_CATEGORY } from "../../../../../models/precomputed/precomputed-types-and-categories"
 import { PVEStages } from "../../../../../models/pve-stages"
-import { SynergyEffects } from "../../../../../models/effects"
 import { IPlayer } from "../../../../../types"
 import {
-  RarityColor,
-  RarityCost,
-  SynergyTriggers
-} from "../../../../../types/Config"
-import { Pkm, PkmFamily, PkmRegionalVariants } from "../../../../../types/enum/Pokemon"
-import { Synergy } from "../../../../../types/enum/Synergy"
+  Pkm,
+  PkmFamily,
+  PkmRegionalVariants
+} from "../../../../../types/enum/Pokemon"
 import { SpecialGameRule } from "../../../../../types/enum/SpecialGameRule"
+import { Synergy } from "../../../../../types/enum/Synergy"
 import { IPokemonData } from "../../../../../types/interfaces/PokemonData"
+import { isOnBench } from "../../../../../utils/board"
 import { roundToNDigits } from "../../../../../utils/number"
 import { values } from "../../../../../utils/schemas"
 import { useAppSelector } from "../../../hooks"
-import { getPortraitSrc } from "../../../../../utils/avatar"
 import { addIconsToDescription } from "../../utils/descriptions"
 import { cc } from "../../utils/jsx"
+import { getCachedPortrait } from "../game/game-pokemon-portrait"
 import SynergyIcon from "../icons/synergy-icon"
 import { EffectDescriptionComponent } from "./effect-description"
-import { usePreference } from "../../../preferences"
 
 export default function SynergyDetailComponent(props: {
   type: Synergy
@@ -51,16 +51,18 @@ export default function SynergyDetailComponent(props: {
     .map((p) => getPokemonData(p as Pkm))
     .sort((a, b) => RarityCost[a.rarity] - RarityCost[b.rarity])
 
-  const baseVariant = (pkm: Pkm): Pkm => (Object.keys(PkmRegionalVariants) as Pkm[]).find((p) =>
-    PkmRegionalVariants[p]!.includes(pkm)
-  ) ?? pkm
+  const baseVariant = (pkm: Pkm): Pkm =>
+    (Object.keys(PkmRegionalVariants) as Pkm[]).find((p) =>
+      PkmRegionalVariants[p]!.includes(pkm)
+    ) ?? pkm
 
   const additionals = PRECOMPUTED_POKEMONS_PER_TYPE_AND_CATEGORY[
     props.type
   ].additionalPokemons
-    .filter((p) =>
-      additionalPokemons.includes(baseVariant(PkmFamily[p])) ||
-      specialGameRule === SpecialGameRule.EVERYONE_IS_HERE
+    .filter(
+      (p) =>
+        additionalPokemons.includes(baseVariant(PkmFamily[p])) ||
+        specialGameRule === SpecialGameRule.EVERYONE_IS_HERE
     )
     .filter(
       (p, i, arr) => arr.findIndex((x) => PkmFamily[x] === PkmFamily[p]) === i // remove duplicates of same family
@@ -91,15 +93,47 @@ export default function SynergyDetailComponent(props: {
     )
     .map((p) => getPokemonData(p as Pkm))
 
-  let additionalInfo = ''
+  let additionalInfo = ""
 
   if (props.type === Synergy.WILD && currentPlayer) {
     const isPVE = stageLevel in PVEStages
-    additionalInfo = t('synergy_description.WILD_ADDITIONAL', { wildChance: roundToNDigits(currentPlayer.wildChance * 100 + (isPVE ? 5 : 0), 1) })
+    additionalInfo = t("synergy_description.WILD_ADDITIONAL", {
+      wildChance: roundToNDigits(
+        currentPlayer.wildChance * 100 + (isPVE ? 5 : 0),
+        1
+      )
+    })
   }
 
   if (props.type === Synergy.BABY && currentPlayer) {
-    additionalInfo = t('synergy_description.BABY_CHANCE_STACKED', { eggChance: roundToNDigits((levelReached === 7 ? currentPlayer.goldenEggChance : currentPlayer.eggChance) * 100, 1) })
+    additionalInfo = t("synergy_description.BABY_CHANCE_STACKED", {
+      eggChance: roundToNDigits(
+        (levelReached === 7
+          ? currentPlayer.goldenEggChance
+          : currentPlayer.eggChance) * 100,
+        1
+      )
+    })
+  }
+
+  if (props.type === Synergy.DRAGON && currentPlayer) {
+    const dragonLevel = values(currentPlayer.board).reduce(
+      (acc, pokemon) =>
+        acc +
+        (pokemon.types.has(Synergy.DRAGON) && !isOnBench(pokemon)
+          ? pokemon.stars
+          : 0),
+      0
+    )
+    additionalInfo = t("synergy_description.DRAGON_STARS", {
+      totalStars: dragonLevel
+    })
+  }
+
+  if (props.type === Synergy.ELECTRIC && currentPlayer) {
+    additionalInfo = t("synergy_description.ELECTRIC_CHARGE", {
+      charge: currentPlayer.cellBattery
+    })
   }
 
   return (
@@ -108,7 +142,11 @@ export default function SynergyDetailComponent(props: {
         <SynergyIcon type={props.type} size="40px" />
         <h3 style={{ margin: 0 }}>{t(`synergy.${props.type}`)}</h3>
       </div>
-      <p style={{ whiteSpace: "pre-wrap" }}>{addIconsToDescription(t(`synergy_description.${props.type}`, { additionalInfo }))}</p>
+      <p style={{ whiteSpace: "pre-wrap" }}>
+        {addIconsToDescription(
+          t(`synergy_description.${props.type}`, { additionalInfo })
+        )}
+      </p>
 
       {SynergyEffects[props.type].map((d, i) => {
         return (
@@ -140,38 +178,68 @@ export default function SynergyDetailComponent(props: {
       })}
       <div style={{ display: "flex", flexWrap: "wrap" }}>
         {regulars.map((p) => (
-          <PokemonPortrait p={p} key={p.name} type={props.type} player={currentPlayer} />
+          <PokemonPortrait
+            p={p}
+            key={p.name}
+            type={props.type}
+            player={currentPlayer}
+          />
         ))}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", marginTop: "0.5em" }}>
         {additionals.map((p) => (
-          <PokemonPortrait p={p} key={p.name} type={props.type} player={currentPlayer} />
+          <PokemonPortrait
+            p={p}
+            key={p.name}
+            type={props.type}
+            player={currentPlayer}
+          />
         ))}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", marginTop: "0.5em" }}>
         {uniques.map((p) => (
-          <PokemonPortrait p={p} key={p.name} type={props.type} player={currentPlayer} />
+          <PokemonPortrait
+            p={p}
+            key={p.name}
+            type={props.type}
+            player={currentPlayer}
+          />
         ))}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", marginTop: "0.5em" }}>
         {legendaries.map((p) => (
-          <PokemonPortrait p={p} key={p.name} type={props.type} player={currentPlayer} />
+          <PokemonPortrait
+            p={p}
+            key={p.name}
+            type={props.type}
+            player={currentPlayer}
+          />
         ))}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", marginTop: "0.5em" }}>
         {specials.map((p) => (
-          <PokemonPortrait p={p} key={p.name} type={props.type} player={currentPlayer} />
+          <PokemonPortrait
+            p={p}
+            key={p.name}
+            type={props.type}
+            player={currentPlayer}
+          />
         ))}
       </div>
     </div>
   )
 }
 
-function PokemonPortrait(props: { p: IPokemonData, type: Synergy, player?: IPlayer }) {
-  const [antialiasing] = usePreference("antialiasing")
-  const isOnTeam = (p: Pkm) => props.player != null && values(props.player.board).some(
-    (x) => PkmFamily[x.name] === PkmFamily[p] && x.types.has(props.type)
-  )
+function PokemonPortrait(props: {
+  p: IPokemonData
+  type: Synergy
+  player?: IPlayer
+}) {
+  const isOnTeam = (p: Pkm) =>
+    props.player != null &&
+    values(props.player.board).some(
+      (x) => PkmFamily[x.name] === PkmFamily[p] && x.types.has(props.type)
+    )
   return (
     <div
       className={cc("pokemon-portrait", {
@@ -180,9 +248,14 @@ function PokemonPortrait(props: { p: IPokemonData, type: Synergy, player?: IPlay
         acquired: isOnTeam(props.p.name)
       })}
       key={props.p.name}
-      style={{ color: RarityColor[props.p.rarity], border: "3px solid " + RarityColor[props.p.rarity] }}
+      style={{
+        color: RarityColor[props.p.rarity],
+        border: "3px solid " + RarityColor[props.p.rarity]
+      }}
     >
-      <img src={getPortraitSrc(props.p.index)} className={cc({ pixelated: !antialiasing })} />
+      <img
+        src={getCachedPortrait(props.p.index, props.player?.pokemonCustoms)}
+      />
     </div>
   )
 }

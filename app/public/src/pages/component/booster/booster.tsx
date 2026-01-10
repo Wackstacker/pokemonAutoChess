@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { DUST_PER_BOOSTER, DUST_PER_SHINY } from "../../../../../types/Config"
 import { useAppDispatch, useAppSelector } from "../../../hooks"
 import { setBoosterContent } from "../../../stores/LobbyStore"
 import { openBooster } from "../../../stores/NetworkStore"
@@ -16,6 +15,7 @@ export default function Booster() {
   const numberOfBooster = user ? user.booster : 0
 
   const [flippedStates, setFlippedStates] = useState<boolean[]>([])
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     setFlippedStates(new Array(boosterContent.length).fill(false))
@@ -25,17 +25,24 @@ export default function Booster() {
   useEffect(
     () => () => {
       dispatch(setBoosterContent([]))
+      setLoading(false)
     },
     [dispatch]
   )
 
+  useEffect(() => {
+    if (boosterContent.length > 0) {
+      setLoading(false)
+    }
+  }, [boosterContent])
+
   function onClickOpenBooster() {
     if (flippedStates.some((flipped) => !flipped)) {
       setFlippedStates(new Array(boosterContent.length).fill(true))
-    }
-    else if (numberOfBooster > 0) {
+    } else if (numberOfBooster > 0) {
       dispatch(setBoosterContent([]))
       dispatch(openBooster())
+      setLoading(true)
     }
   }
 
@@ -50,11 +57,10 @@ export default function Booster() {
       </p>
 
       <div className="boosters-content">
-        {boosterContent.map((pkm, i) => (
+        {boosterContent.map((card, i) => (
           <BoosterCard
             key={"booster" + i}
-            pkm={pkm}
-            shards={pkm.shiny ? DUST_PER_SHINY : DUST_PER_BOOSTER}
+            card={card}
             flipped={flippedStates[i]}
             onFlip={() => handleFlip(i)}
           />
@@ -65,7 +71,7 @@ export default function Booster() {
         <button
           onClick={onClickOpenBooster}
           className={cc("bubbly", { blue: numberOfBooster > 0 })}
-          disabled={numberOfBooster <= 0}
+          disabled={numberOfBooster <= 0 || loading}
         >
           {t("open_booster")}
         </button>

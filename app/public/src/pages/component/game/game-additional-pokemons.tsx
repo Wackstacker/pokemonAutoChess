@@ -1,21 +1,18 @@
 import React from "react"
 import { useTranslation } from "react-i18next"
 import { Tooltip } from "react-tooltip"
+import { RarityColor } from "../../../../../config"
 import { getPokemonData } from "../../../../../models/precomputed/precomputed-pokemon-data"
-import { RarityColor } from "../../../../../types/Config"
 import { SpecialGameRule } from "../../../../../types/enum/SpecialGameRule"
 import { selectCurrentPlayer, useAppSelector } from "../../../hooks"
-import { getPortraitSrc } from "../../../../../utils/avatar"
 import SynergyIcon from "../icons/synergy-icon"
-import { cc } from "../../utils/jsx"
-import { usePreferences } from "../../../preferences"
-import { getPkmWithCustom } from "../../../../../models/colyseus-models/pokemon-customs"
+import { getCachedPortrait } from "./game-pokemon-portrait"
 
 export function GameAdditionalPokemonsIcon() {
   return (
     <div className="my-box" style={{ padding: "5px" }}>
       <img
-        src={`assets/ui/addpicks.png`}
+        src="assets/ui/addpicks.png"
         style={{ width: "2em", height: "2em" }}
         data-tooltip-id={"game-additional-pokemons"}
       />
@@ -32,7 +29,6 @@ export function GameAdditionalPokemonsIcon() {
 }
 
 export function GameAdditionalPokemons() {
-  const [{ antialiasing }] = usePreferences()
   const { t } = useTranslation()
 
   const specialGameRule = useAppSelector((state) => state.game.specialGameRule)
@@ -62,16 +58,14 @@ export function GameAdditionalPokemons() {
           {additionalPokemons.map((p, index) => {
             const pokemon = getPokemonData(p)
             const rarityColor = RarityColor[pokemon.rarity]
-            const custom = getPkmWithCustom(pokemon.index, currentPlayer?.pokemonCustoms)
-
             return (
               <div
-                className={cc(`my-box clickable game-pokemon-portrait`, { pixelated: !antialiasing })}
+                className="my-box clickable game-pokemon-portrait"
                 key={"game-additional-pokemons-" + index}
                 style={{
                   backgroundColor: rarityColor,
                   borderColor: rarityColor,
-                  backgroundImage: `url("${getPortraitSrc(pokemon.index, custom.shiny, custom.emotion)}")`
+                  backgroundImage: `url("${getCachedPortrait(pokemon.index, currentPlayer?.pokemonCustoms)}")`
                 }}
               >
                 <ul className="game-pokemon-portrait-types">

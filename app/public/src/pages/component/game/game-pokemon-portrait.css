@@ -4,6 +4,7 @@
   --portrait-size: calc(var(--container-height) - 5px);
   width: 7.5vw;
   height: var(--container-height);
+  image-rendering: pixelated;
   padding: 0;
   background-repeat: no-repeat;
   background-size: contain;
@@ -13,6 +14,27 @@
 .game-pokemon-portrait .synergy-icon {
   width: 1.4vw;
   height: 1.4vw;
+}
+
+.game-pokemon-portrait .game-pokemon-portrait-types li {
+  position: relative;
+}
+
+.game-pokemon-portrait .game-pokemon-portrait-types .gained img {
+  filter: drop-shadow(0 0 6px white);
+}
+
+.game-pokemon-portrait .game-pokemon-portrait-types .lost::after {
+  content: "";
+  background-image: url("assets/ui/cross.svg");
+  background-size: 100% 100%;
+  filter: drop-shadow(0 0 2px #000);
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .game-pokemon-portrait.empty {
@@ -39,8 +61,11 @@
 
 .game-pokemon-portrait-cost > span {
   font-size: 1.2em;
-  text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0
-    #fff;
+  text-shadow:
+    -1px -1px 0 #fff,
+    1px -1px 0 #fff,
+    -1px 1px 0 #fff,
+    1px 1px 0 #fff;
   margin: 0 2px 0 0;
 }
 
@@ -54,6 +79,7 @@
   top: 0;
   right: 0;
   height: 100%;
+  box-shadow: inset 8px 0 8px -8px #00000080;
 }
 
 .game-pokemon-portrait-types img {
@@ -71,6 +97,7 @@
   display: inline-block;
   width: 22px;
   height: 22px;
+  image-rendering: pixelated;
   margin-left: 4px;
   vertical-align: middle;
 }
@@ -80,6 +107,7 @@
   height: 40px;
   border: 1px solid white;
   border-radius: 4px;
+  image-rendering: pixelated;
 }
 
 .game-pokemon-portrait-planned-icon {
@@ -107,6 +135,7 @@
   background-size: contain;
   background-repeat: no-repeat;
   border-radius: 8px;
+  image-rendering: pixelated;
 }
 
 .game-pokemon-portrait-duo-part-down {

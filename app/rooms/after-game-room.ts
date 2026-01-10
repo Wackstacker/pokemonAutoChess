@@ -18,8 +18,8 @@ export default class AfterGameRoom extends Room<AfterGameState> {
   onCreate(options: {
     players: IAfterGamePlayer[]
     idToken: string
-    elligibleToXP: boolean
-    elligibleToELO: boolean
+    eligibleToXP: boolean
+    eligibleToELO: boolean
     gameMode: GameMode
   }) {
     logger.info("Create AfterGame ", this.roomId)
@@ -38,6 +38,7 @@ export default class AfterGameRoom extends Room<AfterGameState> {
           plyr.role,
           plyr.synergies,
           plyr.elo,
+          plyr.games,
           plyr.moneyEarned,
           plyr.playerDamageDealt,
           plyr.rerollCount
@@ -57,7 +58,6 @@ export default class AfterGameRoom extends Room<AfterGameState> {
       const token = await admin.auth().verifyIdToken(options.idToken)
       const user = await admin.auth().getUser(token.uid)
       const userProfile = await UserMetadata.findOne({ uid: user.uid })
-      client.send(Transfer.USER_PROFILE, userProfile)
 
       if (!user.displayName) {
         throw "No display name"

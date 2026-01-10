@@ -1,21 +1,21 @@
+import { MapSchema } from "@colyseus/schema"
+import { WeatherThreshold } from "../config"
+import Player from "../models/colyseus-models/player"
+import { Pokemon } from "../models/colyseus-models/pokemon"
+import { WeatherByWeatherRocks } from "../types/enum/Item"
 import { Passive } from "../types/enum/Passive"
 import {
+  PassivesAssociatedToWeather,
   Weather,
-  WeatherAssociatedToSynergy,
-  PassivesAssociatedToWeather
+  WeatherAssociatedToSynergy
 } from "../types/enum/Weather"
-
-import { SynergyGivenByItem, WeatherByWeatherRocks } from "../types/enum/Item"
-import { MapSchema } from "@colyseus/schema"
-import { Pokemon } from "../models/colyseus-models/pokemon"
-import { WeatherThreshold } from "../types/Config"
-import Player from "../models/colyseus-models/player"
-import { values } from "../utils/schemas"
+import { hasKey } from "./map"
 
 export function getWeather(
   bluePlayer: Player,
   redPlayer: Player | null,
-  redPlayerBoard: MapSchema<Pokemon, string>
+  redPlayerBoard: MapSchema<Pokemon, string>,
+  isGhostBattle = false
 ): Weather {
   function getDominantWeather(
     count: Map<Weather, number>,
@@ -38,7 +38,7 @@ export function getWeather(
   for (const player of [bluePlayer, redPlayer]) {
     if (player === null) continue
     player.items.forEach((item) => {
-      if (WeatherByWeatherRocks.has(item)) {
+      if (hasKey(WeatherByWeatherRocks, item)) {
         const weatherBoosted = WeatherByWeatherRocks.get(item)!
         boardWeatherScore.set(
           weatherBoosted,
@@ -126,9 +126,13 @@ export function getWeather(
     // apply special weather passives
     board.forEach((pkm) => {
       if (pkm.positionY != 0) {
-        if (pkm.passive === Passive.CASTFORM) {
+        if (
+          pkm.passive === Passive.CASTFORM &&
+          !(isGhostBattle && board === redPlayerBoard)
+        ) {
           const dominant = getDominantWeather(playerWeatherScore, [
-            Weather.SUN,
+            Weather.DROUGHT,
+            Weather.ZENITH,
             Weather.RAIN,
             Weather.SNOW
           ])
@@ -182,6 +186,30 @@ export function getWeather(
               Weather.WINDY,
               Weather.MISTY
             ]) ?? Weather.MISTY
+          boardWeatherScore.set(
+            dominant,
+            (boardWeatherScore.get(dominant) ?? 0) + 100
+          )
+        }
+
+        if (pkm.passive === Passive.RAIN_OR_STORM) {
+          const dominant =
+            getDominantWeather(playerWeatherScore, [
+              Weather.RAIN,
+              Weather.STORM
+            ]) ?? Weather.RAIN
+          boardWeatherScore.set(
+            dominant,
+            (boardWeatherScore.get(dominant) ?? 0) + 100
+          )
+        }
+
+        if (pkm.passive === Passive.DROUGHT_OR_SANDSTORM) {
+          const dominant =
+            getDominantWeather(playerWeatherScore, [
+              Weather.DROUGHT,
+              Weather.SANDSTORM
+            ]) ?? Weather.DROUGHT
           boardWeatherScore.set(
             dominant,
             (boardWeatherScore.get(dominant) ?? 0) + 100

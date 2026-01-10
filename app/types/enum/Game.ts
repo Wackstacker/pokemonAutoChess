@@ -12,7 +12,7 @@ export enum Rarity {
 
 export enum GameMode {
   CUSTOM_LOBBY = "CUSTOM_LOBBY",
-  QUICKPLAY = "QUICKPLAY",
+  CLASSIC = "CLASSIC",
   RANKED = "RANKED",
   SCRIBBLE = "SCRIBBLE",
   TOURNAMENT = "TOURNAMENT"
@@ -31,20 +31,21 @@ export enum PokemonActionState {
   SLEEP = "Sleep",
   HOP = "Hop",
   HURT = "Hurt",
-  FISH = "Fish",
   EMOTE = "Emote",
-  EAT = "Eat"
+  EAT = "Eat",
+  FISH = "Fish",
+  BLOSSOM = "Blossom"
 }
 
 export enum Orientation {
   DOWN = "0",
-  DOWNLEFT = "7",
-  LEFT = "6",
-  UPLEFT = "5",
-  UP = "4",
-  UPRIGHT = "3",
+  DOWNRIGHT = "1",
   RIGHT = "2",
-  DOWNRIGHT = "1"
+  UPRIGHT = "3",
+  UP = "4",
+  UPLEFT = "5",
+  LEFT = "6",
+  DOWNLEFT = "7"
 }
 
 export const OrientationFlip: { [key in Orientation]: Orientation } = {
@@ -56,6 +57,41 @@ export const OrientationFlip: { [key in Orientation]: Orientation } = {
   [Orientation.UPRIGHT]: Orientation.DOWNRIGHT,
   [Orientation.RIGHT]: Orientation.RIGHT,
   [Orientation.DOWNRIGHT]: Orientation.UPRIGHT
+}
+
+export const OrientationKnockback: { [key in Orientation]: Orientation[] } = {
+  [Orientation.DOWN]: [
+    Orientation.DOWN,
+    Orientation.DOWNRIGHT,
+    Orientation.DOWNLEFT
+  ],
+  [Orientation.DOWNLEFT]: [
+    Orientation.DOWNLEFT,
+    Orientation.DOWN,
+    Orientation.LEFT
+  ],
+  [Orientation.LEFT]: [
+    Orientation.LEFT,
+    Orientation.DOWNLEFT,
+    Orientation.UPLEFT
+  ],
+  [Orientation.UPLEFT]: [Orientation.UPLEFT, Orientation.LEFT, Orientation.UP],
+  [Orientation.UP]: [Orientation.UP, Orientation.UPLEFT, Orientation.UPRIGHT],
+  [Orientation.UPRIGHT]: [
+    Orientation.UPRIGHT,
+    Orientation.UP,
+    Orientation.RIGHT
+  ],
+  [Orientation.RIGHT]: [
+    Orientation.RIGHT,
+    Orientation.UPRIGHT,
+    Orientation.DOWNRIGHT
+  ],
+  [Orientation.DOWNRIGHT]: [
+    Orientation.DOWNRIGHT,
+    Orientation.RIGHT,
+    Orientation.DOWN
+  ]
 }
 
 export enum AttackType {

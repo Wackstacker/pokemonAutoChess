@@ -1,15 +1,12 @@
 import React from "react"
 import { useTranslation } from "react-i18next"
 import { Tooltip } from "react-tooltip"
+import { RarityColor, RarityCost } from "../../../../../config"
 import { getPokemonData } from "../../../../../models/precomputed/precomputed-pokemon-data"
-import { RarityColor, RarityCost } from "../../../../../types/Config"
 import { Pkm } from "../../../../../types/enum/Pokemon"
 import { selectCurrentPlayer, useAppSelector } from "../../../hooks"
-import { getPortraitSrc } from "../../../../../utils/avatar"
 import SynergyIcon from "../icons/synergy-icon"
-import { getPkmWithCustom } from "../../../../../models/colyseus-models/pokemon-customs"
-import { usePreferences } from "../../../preferences"
-import { cc } from "../../utils/jsx"
+import { getCachedPortrait } from "./game-pokemon-portrait"
 
 export function GameRegionalPokemonsIcon() {
   return (
@@ -33,11 +30,17 @@ export function GameRegionalPokemonsIcon() {
 
 export function GameRegionalPokemons() {
   const { t } = useTranslation()
-  const [preferences] = usePreferences()
   const currentPlayer = useAppSelector(selectCurrentPlayer)
-  const regionalPokemons: Pkm[] = (currentPlayer?.regionalPokemons ?? new Array<Pkm>()).slice().sort((a, b) => {
-    return RarityCost[getPokemonData(a).rarity] - RarityCost[getPokemonData(b).rarity]
-  })
+  const regionalPokemons: Pkm[] = (
+    currentPlayer?.regionalPokemons ?? new Array<Pkm>()
+  )
+    .slice()
+    .sort((a, b) => {
+      return (
+        RarityCost[getPokemonData(a).rarity] -
+        RarityCost[getPokemonData(b).rarity]
+      )
+    })
 
   if (!regionalPokemons || regionalPokemons.length === 0) {
     return (
@@ -53,21 +56,16 @@ export function GameRegionalPokemons() {
         <div className="grid">
           {regionalPokemons.map((p, index) => {
             const pokemon = getPokemonData(p)
-            const pokemonCustom = getPkmWithCustom(pokemon.index, currentPlayer?.pokemonCustoms)
             const rarityColor = RarityColor[pokemon.rarity]
 
             return (
               <div
-                className={cc(`my-box clickable game-pokemon-portrait`, { pixelated: !preferences.antialiasing })}
+                className="my-box clickable game-pokemon-portrait"
                 key={"game-regional-pokemons-" + index}
                 style={{
                   backgroundColor: rarityColor,
                   borderColor: rarityColor,
-                  backgroundImage: `url("${getPortraitSrc(
-                    pokemon.index,
-                    pokemonCustom.shiny,
-                    pokemonCustom.emotion
-                  )}")`
+                  backgroundImage: `url("${getCachedPortrait(pokemon.index, currentPlayer?.pokemonCustoms)}")`
                 }}
               >
                 <ul className="game-pokemon-portrait-types">

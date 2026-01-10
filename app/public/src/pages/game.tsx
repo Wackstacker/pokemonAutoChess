@@ -4,9 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
 import { toast } from "react-toastify"
-import type { NonFunctionPropNames } from "../../../types/HelperTypes"
+import { MinStageForGameToCount, RegionDetails } from "../../../config"
 import { IPokemonRecord } from "../../../models/colyseus-models/game-record"
-import { IUserMetadata } from "../../../models/mongo-models/user-metadata"
+import { Wanderer } from "../../../models/colyseus-models/wanderer"
+import { PVEStages } from "../../../models/pve-stages"
 import AfterGameState from "../../../rooms/states/after-game-state"
 import GameState from "../../../rooms/states/game-state"
 import {
@@ -21,17 +22,21 @@ import {
   Role,
   Transfer
 } from "../../../types"
-import { MinStageLevelForGameToCount, PortalCarouselStages } from "../../../types/Config"
-import { DungeonDetails } from "../../../types/enum/Dungeon"
-import { Team } from "../../../types/enum/Game"
+import { CloseCodes, CloseCodesMessages } from "../../../types/enum/CloseCodes"
+import { ConnectionStatus } from "../../../types/enum/ConnectionStatus"
+import { GamePhaseState, Team } from "../../../types/enum/Game"
+import { Item } from "../../../types/enum/Item"
+import { Passive } from "../../../types/enum/Passive"
 import { Pkm } from "../../../types/enum/Pokemon"
 import { Synergy } from "../../../types/enum/Synergy"
-import { getFreeSpaceOnBench } from "../../../utils/board"
+import type { NonFunctionPropNames } from "../../../types/HelperTypes"
+import { getAvatarString } from "../../../utils/avatar"
 import { logger } from "../../../utils/logger"
-import { addWanderingPokemon } from "../game/components/pokemon"
+import { values } from "../../../utils/schemas"
 import GameContainer from "../game/game-container"
 import GameScene from "../game/scenes/game-scene"
 import { selectCurrentPlayer, useAppDispatch, useAppSelector } from "../hooks"
+import { authenticateUser } from "../network"
 import store from "../stores"
 import {
   addDpsMeter,
@@ -43,28 +48,32 @@ import {
   removeDpsMeter,
   removePlayer,
   setAdditionalPokemons,
-  updateExperienceManager,
+  setEmotesUnlocked,
   setInterest,
   setItemsProposition,
   setLife,
   setLoadingProgress,
+  setMaxInterest,
   setMoney,
   setNoELO,
   setPhase,
-  setEmotesUnlocked,
+  setPodium,
   setPokemonProposition,
   setRoundTime,
   setShopFreeRolls,
   setShopLocked,
+  setSpecialGameRule,
   setStageLevel,
   setStreak,
   setSynergies,
   setWeather,
-  setSpecialGameRule,
-  setPodium
+  updateExperienceManager
 } from "../stores/GameStore"
-import { joinGame, logIn, setProfile } from "../stores/NetworkStore"
-import { getAvatarString } from "../../../utils/avatar"
+import {
+  joinGame,
+  setConnectionStatus,
+  setErrorAlertMessage
+} from "../stores/NetworkStore"
 import GameDpsMeter from "./component/game/game-dps-meter"
 import GameFinalRank from "./component/game/game-final-rank"
 import GameItemsProposition from "./component/game/game-items-proposition"
@@ -77,17 +86,11 @@ import GameStageInfo from "./component/game/game-stage-info"
 import GameSynergies from "./component/game/game-synergies"
 import GameToasts from "./component/game/game-toasts"
 import { MainSidebar } from "./component/main-sidebar/main-sidebar"
+import { ConnectionStatusNotification } from "./component/system/connection-status-notification"
 import { playMusic, preloadMusic } from "./utils/audio"
 import { LocalStoreKeys, localStore } from "./utils/store"
-import { FIREBASE_CONFIG } from "./utils/utils"
-import { Passive } from "../../../types/enum/Passive"
-import { Item } from "../../../types/enum/Item"
 
 let gameContainer: GameContainer
-
-export function getGameContainer(): GameContainer {
-  return gameContainer
-}
 
 export function getGameScene(): GameScene | undefined {
   return gameContainer?.game?.scene?.getScene<GameScene>("gameScene") as
@@ -95,11 +98,62 @@ export function getGameScene(): GameScene | undefined {
     | undefined
 }
 
+export function getGameContainer(): GameContainer {
+  return gameContainer
+}
+
+export function cyclePlayers(amt: number) {
+  const players = values(gameContainer.room?.state.players)
+  playerClick(
+    players[
+      (players.findIndex((p) => p === gameContainer.player) +
+        amt +
+        players.length) %
+        players.length
+    ].id
+  )
+}
+
+export function playerClick(id: string) {
+  const scene = getGameScene()
+  gameContainer?.room?.send(Transfer.SPECTATE, id)
+  if (scene?.spectate) {
+    if (gameContainer?.room?.state?.players) {
+      const spectatedPlayer = gameContainer?.room?.state?.players.get(id)
+      if (spectatedPlayer) {
+        gameContainer.setPlayer(spectatedPlayer)
+
+        const simulation = gameContainer?.room?.state.simulations.get(
+          spectatedPlayer.simulationId
+        )
+        if (simulation) {
+          gameContainer.setSimulation(simulation)
+        }
+      }
+
+      gameContainer?.gameScene?.board?.updateScoutingAvatars()
+    }
+  }
+}
+
+function showMoneyToast(value: number) {
+  toast(
+    <div className="toast-player-income">
+      <span style={{ verticalAlign: "middle" }}>+{value}</span>
+      <img className="icon-money" src="/assets/icons/money.svg" alt="$" />
+    </div>,
+    { containerId: "toast-money" }
+  )
+}
+
 export default function Game() {
   const dispatch = useAppDispatch()
   const { t } = useTranslation()
   const navigate = useNavigate()
   const client: Client = useAppSelector((state) => state.network.client)
+  const connectionStatus = useAppSelector(
+    (state) => state.network.connectionStatus
+  )
   const room: Room<GameState> | undefined = useAppSelector(
     (state) => state.network.game
   )
@@ -116,8 +170,13 @@ export default function Game() {
   const [loaded, setLoaded] = useState<boolean>(false)
   const [connectError, setConnectError] = useState<string>("")
   const [finalRank, setFinalRank] = useState<number>(0)
-  enum FinalRankVisibility { HIDDEN, VISIBLE, CLOSED }
-  const [finalRankVisibility, setFinalRankVisibility] = useState<FinalRankVisibility>(FinalRankVisibility.HIDDEN)
+  enum FinalRankVisibility {
+    HIDDEN,
+    VISIBLE,
+    CLOSED
+  }
+  const [finalRankVisibility, setFinalRankVisibility] =
+    useState<FinalRankVisibility>(FinalRankVisibility.HIDDEN)
   const container = useRef<HTMLDivElement>(null)
 
   const MAX_ATTEMPS_RECONNECT = 3
@@ -152,6 +211,7 @@ export default function Game() {
             dispatch(joinGame(room))
             connected.current = true
             connecting.current = false
+            dispatch(setConnectionStatus(ConnectionStatus.CONNECTED))
           })
           .catch((error) => {
             if (attempts < MAX_ATTEMPS_RECONNECT) {
@@ -160,10 +220,11 @@ export default function Game() {
               let connectError = error.message
               if (error.code === 4212) {
                 // room disposed
-                connectError = "This game does no longer exist"
+                connectError = "This game does no longer exists"
               }
               //TODO: handle more known error codes with informative messages
               setConnectError(connectError)
+              dispatch(setConnectionStatus(ConnectionStatus.CONNECTION_FAILED))
               logger.error("reconnect error", error)
             }
           })
@@ -173,31 +234,6 @@ export default function Game() {
     },
     [client, dispatch]
   )
-
-  function playerClick(id: string) {
-    const scene = getGameScene()
-    if (scene?.spectate) {
-      // if spectating game we switch directly without notifying the server to not show spectators avatars
-      if (room?.state?.players) {
-        const spectatedPlayer = room?.state?.players.get(id)
-        const gameContainer = getGameContainer()
-        if (spectatedPlayer) {
-          gameContainer.setPlayer(spectatedPlayer)
-
-          const simulation = room.state.simulations.get(
-            spectatedPlayer.simulationId
-          )
-          if (simulation) {
-            gameContainer.setSimulation(simulation)
-          }
-        }
-
-        gameContainer.gameScene?.board?.updateScoutingAvatars()
-      }
-    } else {
-      room?.send(Transfer.SPECTATE, id)
-    }
-  }
 
   const leave = useCallback(async () => {
     const afterPlayers = new Array<IAfterGamePlayer>()
@@ -209,11 +245,14 @@ export default function Game() {
     }
 
     const nbPlayers = room?.state.players.size ?? 0
+    const hasLeftBeforeEnd =
+      currentPlayer?.alive === true && room?.state?.gameFinished === false
 
     if (nbPlayers > 0) {
       room?.state.players.forEach((p) => {
         const afterPlayer: IAfterGamePlayer = {
           elo: p.elo,
+          games: p.games,
           name: p.name,
           id: p.id,
           rank: p.rank,
@@ -237,9 +276,16 @@ export default function Game() {
 
         if (p.board && p.board.size > 0) {
           p.board.forEach((pokemon) => {
-            if (pokemon.positionY != 0 && pokemon.passive !== Passive.INANIMATE) {
+            if (
+              pokemon.positionY != 0 &&
+              pokemon.passive !== Passive.INANIMATE
+            ) {
               afterPlayer.pokemons.push({
-                avatar: getAvatarString(pokemon.index, pokemon.shiny, pokemon.emotion),
+                avatar: getAvatarString(
+                  pokemon.index,
+                  pokemon.shiny,
+                  pokemon.emotion
+                ),
                 items: pokemon.items.toArray(),
                 name: pokemon.name
               })
@@ -251,11 +297,12 @@ export default function Game() {
       })
     }
 
-    const elligibleToXP =
+    const eligibleToXP =
+      nbPlayers >= 2 && (room?.state.stageLevel ?? 0) >= MinStageForGameToCount
+    const eligibleToELO =
       nbPlayers >= 2 &&
-      (room?.state.stageLevel ?? 0) >= MinStageLevelForGameToCount
-    const elligibleToELO =
-      elligibleToXP &&
+      ((room?.state.stageLevel ?? 0) >= MinStageForGameToCount ||
+        hasLeftBeforeEnd) &&
       !room?.state.noElo &&
       afterPlayers.filter((p) => p.role !== Role.BOT).length >= 2
     const gameMode = room?.state.gameMode
@@ -263,8 +310,8 @@ export default function Game() {
     const r: Room<AfterGameState> = await client.create("after-game", {
       players: afterPlayers,
       idToken: token,
-      elligibleToXP,
-      elligibleToELO,
+      eligibleToXP,
+      eligibleToELO,
       gameMode
     })
     localStore.set(
@@ -281,6 +328,19 @@ export default function Game() {
       room.leave()
     }
   }, [client, dispatch, room])
+
+  const spectateTillTheEnd = () => {
+    setFinalRankVisibility(FinalRankVisibility.CLOSED)
+    gameContainer.spectate = true
+    if (gameContainer.gameScene) {
+      gameContainer.gameScene.spectate = true
+      // rerender to make items and units not dragable anymore
+      gameContainer.gameScene?.board?.renderBoard(false)
+      gameContainer.gameScene?.itemsContainer?.render(
+        gameContainer.player!.items
+      )
+    }
+  }
 
   useEffect(() => {
     // create a history entry to prevent back button switching page immediately, and leave game properly instead
@@ -315,14 +375,9 @@ export default function Game() {
   useEffect(() => {
     const connect = () => {
       logger.debug("connecting to game")
-      if (!firebase.apps.length) {
-        firebase.initializeApp(FIREBASE_CONFIG)
-      }
-
-      firebase.auth().onAuthStateChanged(async (user) => {
+      authenticateUser().then(async (user) => {
         if (user && !connecting.current) {
           connecting.current = true
-          dispatch(logIn(user))
           await connectToGame()
         }
       })
@@ -368,16 +423,17 @@ export default function Game() {
         logger.info("preloading maps", maps)
         const gameScene = getGameScene()
         if (gameScene) {
-          gameScene.load.reset()
           await gameScene.preloadMaps(maps)
-          gameScene.load.once("complete", () => {
-            if (!PortalCarouselStages.includes(room.state.stageLevel)) {
-              // map loaded after the end of the portal carousel stage, we swap it now. better later than never
-              const gc = getGameContainer()
-              gc && gc.player && gameScene.setMap(gc.player.map)
-            }
-          })
-          gameScene.load.start()
+          gameScene.load
+            .once("complete", () => {
+              if (room.state.phase !== GamePhaseState.TOWN) {
+                // map loaded after the end of the portal carousel stage, we swap it now. better later than never
+                gameContainer &&
+                  gameContainer.player &&
+                  gameScene.setMap(gameContainer.player.map)
+              }
+            })
+            .start()
         }
       })
       room.onMessage(Transfer.SHOW_EMOTE, (message) => {
@@ -394,15 +450,33 @@ export default function Game() {
           g.board.showEmote(message.id, message?.emote)
         }
       })
-      room.onMessage(Transfer.COOK, async (message: { pokemonId: string, dishes: Item[] }) => {
-        const g = getGameScene()
-        if (g && g.board) {
-          const pokemon = g.board.pokemons.get(message.pokemonId)
-          if (pokemon) {
-            pokemon.cookAnimation(message.dishes)
+      room.onMessage(
+        Transfer.COOK,
+        async (message: { pokemonId: string; dishes: Item[] }) => {
+          const g = getGameScene()
+          if (g && g.board) {
+            const pokemon = g.board.pokemons.get(message.pokemonId)
+            if (pokemon) {
+              pokemon.cookAnimation(message.dishes)
+            }
           }
         }
-      })
+      )
+
+      room.onMessage(
+        Transfer.DIG,
+        async (message: { pokemonId: string; buriedItem: Item | null }) => {
+          setTimeout(() => {
+            const g = getGameScene()
+            if (g && g.board) {
+              const pokemon = g.board.pokemons.get(message.pokemonId)
+              if (pokemon) {
+                pokemon.digAnimation(message.buriedItem)
+              }
+            }
+          }, 500)
+        }
+      )
 
       room.onMessage(Transfer.POKEMON_DAMAGE, (message) => {
         gameContainer.handleDisplayDamage(message)
@@ -426,43 +500,7 @@ export default function Game() {
         )
       })
 
-      room.onMessage(Transfer.PLAYER_INCOME, (value) => {
-        toast(
-          <div className="toast-player-income">
-            <span style={{ verticalAlign: "middle" }}>+{value}</span>
-            <img className="icon-money" src="/assets/icons/money.svg" alt="$" />
-          </div>,
-          { containerId: "toast-money" }
-        )
-      })
-
-      room.onMessage(Transfer.UNOWN_WANDERING, ({ id, pkm }: { id: string, pkm: Pkm }) => {
-        if (gameContainer.game) {
-          const g = getGameScene()
-          if (g && g.unownManager) {
-            g.unownManager.addWanderingUnown(pkm, id)
-          }
-        }
-      })
-
-      room.onMessage(Transfer.POKEMON_WANDERING, (data: { id: string, pkm: Pkm }) => {
-        const scene = getGameScene()
-        const { id, pkm } = data
-        if (scene) {
-          addWanderingPokemon(scene, id, pkm, (sprite, id, pointer, tween) => {
-            if (
-              scene.board &&
-              getFreeSpaceOnBench(scene.board.player.board) > 0
-            ) {
-              room.send(Transfer.POKEMON_WANDERING, { id })
-              sprite.destroy()
-              tween.destroy()
-            } else if (scene.board) {
-              scene.board.displayText(pointer.x, pointer.y, t("full"))
-            }
-          })
-        }
-      })
+      room.onMessage(Transfer.PLAYER_INCOME, showMoneyToast)
 
       room.onMessage(Transfer.BOARD_EVENT, (event: IBoardEvent) => {
         if (gameContainer.game) {
@@ -496,8 +534,35 @@ export default function Game() {
 
       room.onMessage(Transfer.GAME_END, leave)
 
-      room.onMessage(Transfer.USER_PROFILE, (user: IUserMetadata) => {
-        dispatch(setProfile(user))
+      room.onLeave((code) => {
+        const shouldGoToLobby = [
+          CloseCodes.ROOM_DELETED,
+          CloseCodes.USER_BANNED
+        ].includes(code)
+        if (shouldGoToLobby) {
+          const errorMessage = CloseCodesMessages[code]
+          if (errorMessage) {
+            dispatch(setErrorAlertMessage(t(`errors.${errorMessage}`)))
+          }
+
+          const scene = getGameScene()
+          if (scene?.music) scene.music.destroy()
+          navigate("/lobby")
+        } else if (code >= 1001 && code <= 1015) {
+          // Between 1001 and 1015 - Abnormal socket shutdown
+          if (connectionStatus === ConnectionStatus.CONNECTED) {
+            dispatch(setConnectionStatus(ConnectionStatus.CONNECTION_LOST))
+            // attempting to auto reconnect after 3 seconds
+            /* We leave 3 seconds because when refreshing the page, the connection is closed with code 1001 on Firefox
+              and this code is called, so the reconnection token might be reused before the page reload, causing the
+              reconnection token to be invalid the second time after page reload
+              3 seconds should be enough for the browser to kill all existing connections and timeouts for the tab
+              before reloading the page */
+            setTimeout(() => connectToGame(), 3000) //TOFIX: find a better way to handle this
+          } else {
+            dispatch(setConnectionStatus(ConnectionStatus.CONNECTION_FAILED))
+          }
+        }
       })
 
       const $ = getStateCallbacks(room)
@@ -505,6 +570,16 @@ export default function Game() {
 
       $state.listen("roundTime", (value) => {
         dispatch(setRoundTime(value))
+        const stageLevel = room.state.stageLevel ?? 0
+        if (
+          room.state.phase === GamePhaseState.PICK &&
+          stageLevel in PVEStages === false &&
+          value < 5 &&
+          gameContainer.gameScene?.board &&
+          !gameContainer.gameScene.board.portal
+        ) {
+          gameContainer.gameScene.board.addPortal()
+        }
       })
 
       $state.listen("phase", (newPhase, previousPhase) => {
@@ -530,7 +605,7 @@ export default function Game() {
       })
 
       $state.additionalPokemons.onChange(() => {
-        dispatch(setAdditionalPokemons(Array.from(room.state.additionalPokemons)))
+        dispatch(setAdditionalPokemons(values(room.state.additionalPokemons)))
       })
 
       $state.simulations.onRemove(() => {
@@ -581,8 +656,10 @@ export default function Game() {
             })
           })
 
-          $dpsMeter.onRemove(() => {
-            dispatch(removeDpsMeter({ simulationId: simulation.id, team }))
+          $dpsMeter.onRemove((dps) => {
+            dispatch(
+              removeDpsMeter({ id: dps.id, team, simulationId: simulation.id })
+            )
           })
         })
       })
@@ -594,6 +671,7 @@ export default function Game() {
 
         if (player.id == uid) {
           dispatch(setInterest(player.interest))
+          dispatch(setMaxInterest(player.maxInterest))
           dispatch(setStreak(player.streak))
           dispatch(setShopLocked(player.shopLocked))
           dispatch(setShopFreeRolls(player.shopFreeRolls))
@@ -601,6 +679,9 @@ export default function Game() {
 
           $player.listen("interest", (value) => {
             dispatch(setInterest(value))
+          })
+          $player.listen("maxInterest", (value) => {
+            dispatch(setMaxInterest(value))
           })
           $player.shop.onChange((pkm: Pkm, index: number) => {
             dispatch(changeShop({ value: pkm, index }))
@@ -611,8 +692,12 @@ export default function Game() {
           $player.listen("shopFreeRolls", (value) => {
             dispatch(setShopFreeRolls(value))
           })
-          $player.listen("money", (value) => {
+          $player.listen("money", (value, previousValue) => {
             dispatch(setMoney(value))
+            if (value - previousValue >= 30) {
+              // show income toast for significant income only
+              showMoneyToast(value - previousValue)
+            }
           })
           $player.listen("streak", (value) => {
             dispatch(setStreak(value))
@@ -624,13 +709,15 @@ export default function Game() {
             value <= 0 &&
             value !== previousValue &&
             player.id === uid &&
-            !spectate
-            && finalRankVisibility === FinalRankVisibility.HIDDEN
+            !spectate &&
+            finalRankVisibility === FinalRankVisibility.HIDDEN
           ) {
             setFinalRankVisibility(FinalRankVisibility.VISIBLE)
+            getGameScene()?.input.keyboard?.removeAllListeners()
           }
         })
         $player.listen("experienceManager", (experienceManager) => {
+          const $experienceManager = $(experienceManager)
           if (player.id === uid) {
             dispatch(updateExperienceManager(experienceManager))
             const fields: NonFunctionPropNames<IExperienceManager>[] = [
@@ -638,7 +725,6 @@ export default function Game() {
               "expNeeded",
               "level"
             ]
-            const $experienceManager = $(experienceManager)
             fields.forEach((field) => {
               $experienceManager.listen(field, (value) => {
                 dispatch(
@@ -650,6 +736,19 @@ export default function Game() {
               })
             })
           }
+          $experienceManager.listen("level", (value) => {
+            if (value > 1) {
+              toast(
+                <p>
+                  {t("level")} {value}
+                </p>,
+                {
+                  containerId: player.rank.toString(),
+                  className: "toast-level-up"
+                }
+              )
+            }
+          })
         })
         $player.listen("loadingProgress", (value) => {
           dispatch(setLoadingProgress({ id: player.id, value: value }))
@@ -663,9 +762,9 @@ export default function Game() {
               if (!alreadyLoading) {
                 gameScene.load.reset()
               }
-              preloadMusic(gameScene, DungeonDetails[newMap].music)
+              preloadMusic(gameScene, RegionDetails[newMap].music)
               gameScene.load.once("complete", () =>
-                playMusic(gameScene, DungeonDetails[newMap].music)
+                playMusic(gameScene, RegionDetails[newMap].music)
               )
               if (!alreadyLoading) {
                 gameScene.load.start()
@@ -678,7 +777,6 @@ export default function Game() {
         $player.listen("spectatedPlayerId", (spectatedPlayerId) => {
           if (room?.state?.players) {
             const spectatedPlayer = room?.state?.players.get(spectatedPlayerId)
-            const gameContainer = getGameContainer()
             if (spectatedPlayer && player.id === uid) {
               gameContainer.setPlayer(spectatedPlayer)
 
@@ -715,7 +813,8 @@ export default function Game() {
           "totalPlayerDamageDealt",
           "eggChance",
           "goldenEggChance",
-          "wildChance"
+          "wildChance",
+          "cellBattery"
         ]
 
         fields.forEach((field) => {
@@ -732,15 +831,43 @@ export default function Game() {
 
         $player.itemsProposition.onChange((value, index) => {
           if (player.id == uid) {
-            dispatch(setItemsProposition(Array.from(player.itemsProposition)))
+            dispatch(setItemsProposition(values(player.itemsProposition)))
           }
         })
 
         $player.pokemonsProposition.onChange((value, index) => {
           if (player.id == uid) {
-            dispatch(
-              setPokemonProposition(Array.from(player.pokemonsProposition))
-            )
+            dispatch(setPokemonProposition(values(player.pokemonsProposition)))
+          }
+        })
+
+        $player.groundHoles.onChange((value) => {
+          if (player.id === store.getState().game.currentPlayerId) {
+            const gameScene = getGameScene()
+            if (gameScene?.board && room.state.phase === GamePhaseState.PICK) {
+              gameScene.board.renderGroundHoles()
+            }
+          }
+        })
+
+        $player.listen("mulch", (value) => {
+          dispatch(changePlayer({ id: player.id, field: "mulch", value }))
+          getGameScene()?.board?.updateMulchCount()
+        })
+        $player.listen("mulchCap", (value) => {
+          dispatch(changePlayer({ id: player.id, field: "mulchCap", value }))
+          getGameScene()?.board?.updateMulchCount()
+        })
+
+        $player.wanderers.onAdd((wanderer: Wanderer) => {
+          if (
+            gameContainer.game &&
+            player.id === store.getState().game.currentPlayerId
+          ) {
+            const g = getGameScene()
+            if (g && g.wandererManager) {
+              g.wandererManager.addWanderer(wanderer)
+            }
           }
         })
       })
@@ -774,7 +901,7 @@ export default function Game() {
           <MainSidebar page="game" leave={leave} leaveLabel={t("leave_game")} />
           <GameFinalRank
             rank={finalRank}
-            hide={() => setFinalRankVisibility(FinalRankVisibility.CLOSED)}
+            hide={spectateTillTheEnd}
             leave={leave}
             visible={finalRankVisibility === FinalRankVisibility.VISIBLE}
           />
@@ -790,7 +917,7 @@ export default function Game() {
       ) : (
         <GameLoadingScreen connectError={connectError} />
       )}
+      <ConnectionStatusNotification />
     </main>
   )
 }
-

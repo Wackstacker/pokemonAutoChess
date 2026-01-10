@@ -1,44 +1,47 @@
 import { t } from "i18next"
 import React, { useEffect, useMemo, useState } from "react"
 import { Tab, TabList, TabPanel, Tabs } from "react-tabs"
+import { EloRankThreshold } from "../../../../../config"
 import {
-  IItemsStatistic,
-  fetchMetaItems
-} from "../../../../../models/mongo-models/items-statistic"
+  fetchMetaItems,
+  IItemsStatisticV2,
+  IItemV2
+} from "../../../../../models/mongo-models/items-statistic-v2"
+import { EloRank } from "../../../../../types/enum/EloRank"
 import {
-  ArtificialItems,
   CraftableItems,
-  WeatherRocks,
-  ShinyItems
+  Item,
+  ShinyItems,
+  Tools
 } from "../../../../../types/enum/Item"
 import ItemStatistic from "./item-statistic"
 
 export function ItemReport() {
   const [loading, setLoading] = useState<boolean>(true)
-  const [metaItems, setMetaItems] = useState<IItemsStatistic[]>([])
+  const [metaItems, setMetaItems] = useState<IItemsStatisticV2[]>([])
+  const [itemRankingBy, setItemRanking] = useState<string>("count")
+  const [eloThreshold, setEloTreshold] = useState<EloRank>(EloRank.LEVEL_BALL)
+
   useEffect(() => {
     fetchMetaItems().then((res) => {
-      setLoading(false)
       setMetaItems(res)
+      setLoading(false)
     })
   }, [])
 
-  const [itemRankingBy, setItemRanking] = useState<string>("count")
-
   const sortedMetaItems = useMemo(() => {
-    return [...metaItems].sort((a, b) => {
-      const order = itemRankingBy == "count" ? -1 : 1
-      return (a[itemRankingBy] - b[itemRankingBy]) * order
-    })
+    return [...metaItems].map((m) => ({
+      tier: m.tier,
+      items: ((Object.values(m.items) || []) as IItemV2[]).sort((a, b) => {
+        const order = itemRankingBy === "count" ? -1 : 1
+        return (a[itemRankingBy] - b[itemRankingBy]) * order
+      })
+    }))
   }, [metaItems, itemRankingBy])
 
-  const tabs = [
+  const tabs: { label: string; key: string; items: readonly Item[] }[] = [
     { label: t("craftable_items"), key: "craftable", items: CraftableItems },
-    {
-      label: t("artificial_items"),
-      key: "artificial_items",
-      items: ArtificialItems
-    },
+    { label: t("tools"), key: "tools", items: Tools },
     { label: t("shiny_items"), key: "shiny_items", items: ShinyItems }
   ]
 
@@ -59,6 +62,16 @@ export function ItemReport() {
             {t("rank")} {t("by_average_place")}
           </option>
         </select>
+        <select
+          value={eloThreshold}
+          onChange={(e) => setEloTreshold(e.target.value as EloRank)}
+        >
+          {Object.keys(EloRank).map((r) => (
+            <option value={r} key={r}>
+              {t(`elorank.${r}`)} ({t("elo")} {">"} {EloRankThreshold[r]})
+            </option>
+          ))}
+        </select>
       </header>
 
       <Tabs>
@@ -76,7 +89,8 @@ export function ItemReport() {
               <p>{loading ? t("loading") : t("no_data_available")}</p>
             )}
             {sortedMetaItems
-              .filter((item) => tab.items.includes(item.name))
+              ?.find((i) => i.tier === eloThreshold)
+              ?.items.filter((item) => tab.items.includes(item.name))
               .map((item, i) => {
                 return (
                   <ItemStatistic item={item} key={item.name} rank={i + 1} />

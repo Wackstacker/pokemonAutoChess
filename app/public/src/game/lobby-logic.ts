@@ -1,51 +1,51 @@
-import { RoomAvailable, Room, Client, getStateCallbacks } from "colyseus.js"
+import { Client, getStateCallbacks, Room, RoomAvailable } from "colyseus.js"
 import firebase from "firebase/compat/app"
 import { t } from "i18next"
 import { NavigateFunction } from "react-router-dom"
+import {
+  TournamentBracketSchema,
+  TournamentPlayerSchema,
+  TournamentSchema
+} from "../../../models/colyseus-models/tournament"
+import PreparationState from "../../../rooms/states/preparation-state"
+import { ICustomLobbyState, ISuggestionUser, Transfer } from "../../../types"
+import type { Booster } from "../../../types/Booster"
+import { CloseCodes, CloseCodesMessages } from "../../../types/enum/CloseCodes"
+import { ConnectionStatus } from "../../../types/enum/ConnectionStatus"
 import type { NonFunctionPropNames } from "../../../types/HelperTypes"
 import {
-  TournamentSchema,
-  TournamentPlayerSchema,
-  TournamentBracketSchema
-} from "../../../models/colyseus-models/tournament"
-import { IUserMetadata } from "../../../models/mongo-models/user-metadata"
-import PreparationState from "../../../rooms/states/preparation-state"
-import {
-  ICustomLobbyState,
-  Transfer,
-  PkmWithCustom,
-  ISuggestionUser
-} from "../../../types"
-import { CloseCodes, CloseCodesMessages } from "../../../types/enum/CloseCodes"
+  IUserMetadataClient,
+  IUserMetadataJSON
+} from "../../../types/interfaces/UserMetadata"
 import { logger } from "../../../utils/logger"
-import { localStore, LocalStoreKeys } from "../pages/utils/store"
-import { FIREBASE_CONFIG } from "../pages/utils/utils"
+import { authenticateUser } from "../network"
+import { LocalStoreKeys, localStore } from "../pages/utils/store"
 import store, { AppDispatch } from "../stores"
 import {
-  pushMessage,
-  setCcu,
-  addTournament,
-  changeTournament,
-  updateTournament,
-  changeTournamentPlayer,
-  addTournamentBracket,
-  changeTournamentBracket,
-  removeTournamentBracket,
-  pushBotLog,
   addRoom,
+  addTournament,
+  addTournamentBracket,
+  changeTournament,
+  changeTournamentBracket,
+  changeTournamentPlayer,
+  pushMessage,
   removeRoom,
-  setSearchedUser,
+  removeTournament,
+  removeTournamentBracket,
+  resetLobby,
   setBoosterContent,
+  setCcu,
+  setSearchedUser,
   setSuggestions,
-  resetLobby
+  updateTournament
 } from "../stores/LobbyStore"
 import {
-  logIn,
-  removeMessage,
-  deleteTournament,
-  setProfile,
   joinLobby,
-  setErrorAlertMessage
+  removeMessage,
+  setConnectionStatus,
+  setErrorAlertMessage,
+  setPendingGameId,
+  setProfile
 } from "../stores/NetworkStore"
 import { resetPreparation } from "../stores/PreparationStore"
 
@@ -62,14 +62,7 @@ export async function joinLobbyRoom(
         return resolve(lobby)
       }
 
-      if (!firebase.apps.length) {
-        firebase.initializeApp(FIREBASE_CONFIG)
-      }
-
-      firebase.auth().onAuthStateChanged(async (user) => {
-        if (!user) return reject(CloseCodes.USER_NOT_AUTHENTICATED)
-        dispatch(logIn(user))
-
+      authenticateUser().then(async (user) => {
         try {
           let room: Room<ICustomLobbyState> | undefined = undefined
 
@@ -92,6 +85,7 @@ export async function joinLobbyRoom(
           }
 
           // store reconnection token for 5 minutes ; server may kick the inactive users before that
+          dispatch(setConnectionStatus(ConnectionStatus.CONNECTED))
           localStore.set(
             LocalStoreKeys.RECONNECTION_LOBBY,
             { reconnectionToken: room.reconnectionToken, roomId: room.roomId },
@@ -225,15 +219,11 @@ export async function joinLobbyRoom(
           })
 
           $state.tournaments.onRemove((tournament) => {
-            dispatch(deleteTournament(tournament))
+            dispatch(removeTournament(tournament))
           })
 
           room.onMessage(Transfer.BANNED, (message) => {
             alert(message)
-          })
-
-          room.onMessage(Transfer.BOT_DATABASE_LOG, (message) => {
-            dispatch(pushBotLog(message))
           })
 
           room.onMessage(Transfer.ROOMS, (rooms: RoomAvailable[]) => {
@@ -260,17 +250,21 @@ export async function joinLobbyRoom(
             dispatch(removeRoom(roomId))
           )
 
-          room.onMessage(Transfer.USER_PROFILE, (user: IUserMetadata) => {
+          room.onMessage(Transfer.USER_PROFILE, (user: IUserMetadataJSON) => {
             dispatch(setProfile(user))
           })
 
-          room.onMessage(Transfer.USER, (user: IUserMetadata) =>
+          room.onMessage(Transfer.RECONNECT_PROMPT, (pendingGameId: string) => {
+            dispatch(setPendingGameId(pendingGameId))
+          })
+
+          room.onMessage(Transfer.USER, (user: IUserMetadataClient) =>
             dispatch(setSearchedUser(user))
           )
 
           room.onMessage(
             Transfer.BOOSTER_CONTENT,
-            (boosterContent: PkmWithCustom[]) => {
+            (boosterContent: Booster) => {
               dispatch(setBoosterContent(boosterContent))
             }
           )
@@ -308,14 +302,16 @@ export async function joinExistingPreparationRoom(
   client: Client,
   lobby: Room<ICustomLobbyState> | undefined,
   dispatch: AppDispatch,
-  navigate: NavigateFunction
+  navigate: NavigateFunction,
+  password?: string
 ) {
   try {
     const token = await firebase.auth().currentUser?.getIdToken()
     if (token) {
       dispatch(resetPreparation())
       const room: Room<PreparationState> = await client.joinById(roomId, {
-        idToken: token
+        idToken: token,
+        password
       })
       if (room.name !== "preparation") {
         room.connection.isOpen && room.leave(false)
@@ -338,9 +334,10 @@ export async function joinExistingPreparationRoom(
       dispatch(resetLobby())
       navigate("/preparation")
     }
-  } catch (error) {
-    if (error.code && error.code in CloseCodesMessages) {
-      const errorMessage = CloseCodesMessages[error.code]
+  } catch (error: any) {
+    if (error?.code && error.code in CloseCodesMessages) {
+      const errorMessage =
+        CloseCodesMessages[error.code as keyof typeof CloseCodesMessages]
       dispatch(setErrorAlertMessage(t(`errors.${errorMessage}`)))
     } else {
       logger.error(error)

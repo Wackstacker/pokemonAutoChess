@@ -1,22 +1,24 @@
+import { EvolutionTime } from "../config"
 import Player from "../models/colyseus-models/player"
 import { Pokemon, PokemonClasses } from "../models/colyseus-models/pokemon"
 import PokemonFactory from "../models/pokemon-factory"
 import { IPlayer } from "../types"
-import { EvolutionTime } from "../types/Config"
 import { Ability } from "../types/enum/Ability"
+import { EffectEnum } from "../types/enum/Effect"
 import { PokemonActionState } from "../types/enum/Game"
 import { Item, ItemComponents, ShinyItems } from "../types/enum/Item"
 import { Passive } from "../types/enum/Passive"
 import { Pkm } from "../types/enum/Pokemon"
 import { sum } from "../utils/array"
+import { isOnBench } from "../utils/board"
 import { logger } from "../utils/logger"
 import { pickRandomIn, shuffleArray } from "../utils/random"
 import { values } from "../utils/schemas"
 
-type DivergentEvolution = (
+type DivergentEvolution<Param = any> = (
   pokemon: Pokemon,
   player: IPlayer,
-  ...additionalArgs: unknown[]
+  ...additionalArgs: Param[]
 ) => Pkm
 
 export abstract class EvolutionRule {
@@ -27,11 +29,9 @@ export abstract class EvolutionRule {
   ): boolean
   abstract evolve(pokemon: Pokemon, player: Player, stageLevel: number): Pokemon
   divergentEvolution?: DivergentEvolution
-  stacks: number
 
   constructor(divergentEvolution?: DivergentEvolution) {
     if (divergentEvolution) this.divergentEvolution = divergentEvolution
-    this.stacks = 0
   }
 
   getEvolution(
@@ -52,13 +52,13 @@ export abstract class EvolutionRule {
   ): void | Pokemon {
     if (this.canEvolve(pokemon, player, stageLevel)) {
       const pokemonEvolved = this.evolve(pokemon, player, stageLevel)
+      if (pokemon.supercharged) pokemonEvolved.supercharged = true
       this.afterEvolve(pokemonEvolved, player, stageLevel)
       return pokemonEvolved
     }
   }
 
   afterEvolve(pokemonEvolved: Pokemon, player: Player, stageLevel: number) {
-    pokemonEvolved.onAcquired(player)
     player.updateSynergies()
     player.board.forEach((pokemon) => {
       if (
@@ -67,8 +67,8 @@ export abstract class EvolutionRule {
         pokemonEvolved.passive !== Passive.COSMOG &&
         pokemonEvolved.passive !== Passive.COSMOEM
       ) {
-        pokemon.hp += 10
-        pokemon.evolutionRule.stacks++
+        pokemon.addMaxHP(10, player)
+        pokemon.stacks++
       }
       // check evolutions again if it can evolve twice in a row
       pokemon.evolutionRule.tryEvolve(pokemon, player, stageLevel)
@@ -81,7 +81,11 @@ export class CountEvolutionRule extends EvolutionRule {
 
   constructor(
     numberRequired: number,
-    divergentEvolution?: (pokemon: Pokemon, player: IPlayer) => Pkm
+    divergentEvolution?: (
+      pokemon: Pokemon,
+      player: IPlayer,
+      stageLevel: number
+    ) => Pkm
   ) {
     super(divergentEvolution)
     this.numberRequired = numberRequired
@@ -95,7 +99,7 @@ export class CountEvolutionRule extends EvolutionRule {
     return copies.length >= this.numberRequired
   }
 
-  canEvolveIfBuyingOne(pokemon: Pokemon, player: Player): boolean {
+  canEvolveIfGettingOne(pokemon: Pokemon, player: Player): boolean {
     if (!pokemon.hasEvolution) return false
     const copies = values(player.board).filter(
       (p) => p.index === pokemon.index && !p.items.has(Item.EVIOLITE)
@@ -106,8 +110,10 @@ export class CountEvolutionRule extends EvolutionRule {
   evolve(pokemon: Pokemon, player: Player, stageLevel: number): Pokemon {
     const pokemonEvolutionName = this.getEvolution(pokemon, player, stageLevel)
     let coord: { x: number; y: number } | undefined
-    const itemsToAdd = new Array<Item>()
-    const itemComponentsToAdd = new Array<Item>()
+    const itemsComponentsOnBench: Item[] = []
+    const itemsCompleteOnBench: Item[] = []
+    const itemsComponentsOnBoard: Item[] = []
+    const itemsCompleteOnBoard: Item[] = []
 
     const pokemonsBeforeEvolution: Pokemon[] = []
 
@@ -134,9 +140,17 @@ export class CountEvolutionRule extends EvolutionRule {
 
         pkm.items.forEach((el) => {
           if (ItemComponents.includes(el)) {
-            itemComponentsToAdd.push(el)
+            if (isOnBench(pkm)) {
+              itemsComponentsOnBench.push(el)
+            } else {
+              itemsComponentsOnBoard.push(el)
+            }
           } else {
-            itemsToAdd.push(el)
+            if (isOnBench(pkm)) {
+              itemsCompleteOnBench.push(el)
+            } else {
+              itemsCompleteOnBoard.push(el)
+            }
           }
         })
         player.board.delete(id)
@@ -150,14 +164,27 @@ export class CountEvolutionRule extends EvolutionRule {
     )
 
     carryOverPermanentStats(pokemonEvolved, pokemonsBeforeEvolution)
-    if (pokemonsBeforeEvolution.some((p) => p.meal)) {
-      pokemonEvolved.meal = pickRandomIn(
-        pokemonsBeforeEvolution.filter((p) => p.meal).map((p) => p.meal)
-      )
+    if (pokemonsBeforeEvolution.some((p) => p.dishes.size > 0)) {
+      const dishes = pokemonsBeforeEvolution
+        .filter((p) => p.dishes.size > 0)
+        .flatMap((p) => values(p.dishes))
+      while (pokemonEvolved.canEat && dishes.length > 0) {
+        const dish = dishes.pop()
+        if (dish && !pokemonEvolved.dishes.has(dish)) {
+          pokemonEvolved.dishes.add(dish)
+        }
+      }
     }
 
-    shuffleArray(itemsToAdd)
-    for (const item of itemsToAdd) {
+    shuffleArray(itemsCompleteOnBench)
+    shuffleArray(itemsCompleteOnBoard)
+
+    const itemsCompleteToAdd = [
+      ...itemsCompleteOnBoard,
+      ...itemsCompleteOnBench
+    ]
+
+    for (const item of itemsCompleteToAdd) {
       if (pokemonEvolved.items.has(item) || pokemonEvolved.items.size >= 3) {
         player.items.push(item)
       } else {
@@ -168,10 +195,15 @@ export class CountEvolutionRule extends EvolutionRule {
       }
     }
 
-    shuffleArray(itemComponentsToAdd)
+    shuffleArray(itemsComponentsOnBench)
+    shuffleArray(itemsComponentsOnBoard)
+    const itemComponentsToAdd = [
+      ...itemsComponentsOnBoard,
+      ...itemsComponentsOnBench
+    ]
     for (const itemComponent of itemComponentsToAdd) {
       if (
-        pokemonEvolved.items.has(itemComponent) ||
+        values(pokemonEvolved.items).some((i) => ItemComponents.includes(i)) ||
         pokemonEvolved.items.size >= 3
       ) {
         player.items.push(itemComponent)
@@ -193,6 +225,7 @@ export class CountEvolutionRule extends EvolutionRule {
       pokemon.afterEvolve({ pokemonEvolved, pokemonsBeforeEvolution, player })
     }
 
+    pokemonEvolved.onAcquired(player)
     return pokemonEvolved
   }
 }
@@ -202,7 +235,7 @@ export class ItemEvolutionRule extends EvolutionRule {
 
   constructor(
     itemsTriggeringEvolution: Item[],
-    divergentEvolution?: DivergentEvolution
+    divergentEvolution?: DivergentEvolution<Item>
   ) {
     super(divergentEvolution)
     this.itemsTriggeringEvolution = itemsTriggeringEvolution
@@ -210,9 +243,8 @@ export class ItemEvolutionRule extends EvolutionRule {
 
   canEvolve(pokemon: Pokemon, player: Player, stageLevel: number): boolean {
     if (pokemon.items.has(Item.EVIOLITE)) return false
-    const items = values(pokemon.items)
-    pokemon.meal !== "" && items.push(pokemon.meal)
-    const itemEvolution = items.find((item) =>
+    const itemsAndDishes = values(pokemon.items).concat(values(pokemon.dishes))
+    const itemEvolution = itemsAndDishes.find((item) =>
       this.itemsTriggeringEvolution.includes(item)
     )
 
@@ -242,48 +274,59 @@ export class ItemEvolutionRule extends EvolutionRule {
 }
 
 export class HatchEvolutionRule extends EvolutionRule {
-  evolutionTimer: number
-  constructor(
-    roundsRequired = EvolutionTime.EVOLVE_HATCH,
-    divergentEvolution?: DivergentEvolution
-  ) {
+  constructor(divergentEvolution?: DivergentEvolution) {
     super(divergentEvolution)
-    this.evolutionTimer = roundsRequired
+  }
+
+  getHatchTime(pokemon: Pokemon, player: Player): number {
+    if (pokemon.name === Pkm.EGG) {
+      return player.effects.has(EffectEnum.BREEDER) ||
+        player.effects.has(EffectEnum.GOLDEN_EGGS)
+        ? EvolutionTime.EGG_HATCH - 1
+        : EvolutionTime.EGG_HATCH
+    }
+    return EvolutionTime.EVOLVE_HATCH
   }
 
   updateHatch(pokemon: Pokemon, player: Player, stageLevel: number) {
-    this.evolutionTimer -= 1
+    pokemon.stacks++
     const willHatch = this.canEvolve(pokemon, player, stageLevel)
     if (willHatch) {
       pokemon.action = PokemonActionState.HOP
       setTimeout(() => {
         pokemon.evolutionRule.tryEvolve(pokemon, player, stageLevel)
-        if (pokemon.name === Pkm.EGG && pokemon.shiny) {
-          player.items.push(pickRandomIn(ShinyItems))
-        }
       }, 2000)
     } else if (pokemon.name === Pkm.EGG) {
-      pokemon.action =
-        [
-          PokemonActionState.HOP,
-          PokemonActionState.EMOTE,
-          PokemonActionState.IDLE
-        ][this.evolutionTimer] ?? PokemonActionState.IDLE
+      const hatchTime = this.getHatchTime(pokemon, player)
+      if (pokemon.stacks >= hatchTime) {
+        pokemon.action = PokemonActionState.HOP
+      } else if (pokemon.stacks >= hatchTime - 1) {
+        pokemon.action = PokemonActionState.EMOTE
+      } else {
+        pokemon.action = PokemonActionState.IDLE
+      }
     }
   }
 
   canEvolve(pokemon: Pokemon, player: Player, stageLevel: number): boolean {
     if (pokemon.items.has(Item.EVIOLITE)) return false
-    return this.evolutionTimer === 0
+    if (!player.board.has(pokemon.id)) return false // egg has been sold in the meantime
+    pokemon.stacksRequired = this.getHatchTime(pokemon, player)
+    return pokemon.stacks >= pokemon.stacksRequired
   }
 
   evolve(pokemon: Pokemon, player: Player, stageLevel: number): Pokemon {
-    this.evolutionTimer = EvolutionTime.EVOLVE_HATCH // prevent trying to evolve twice in a row
+    pokemon.stacks = 0 // prevent trying to evolve twice in a row
     const pokemonEvolutionName = this.getEvolution(pokemon, player, stageLevel)
     const pokemonEvolved = player.transformPokemon(
       pokemon,
       pokemonEvolutionName
     )
+
+    if (pokemonEvolved != null && pokemon.name === Pkm.EGG && pokemon.shiny) {
+      player.items.push(pickRandomIn(ShinyItems))
+    }
+
     return pokemonEvolved
   }
 }
@@ -306,6 +349,7 @@ export class ConditionBasedEvolutionRule extends EvolutionRule {
 
   canEvolve(pokemon: Pokemon, player: Player, stageLevel: number): boolean {
     if (pokemon.items.has(Item.EVIOLITE)) return false
+    if (player.board.has(pokemon.id) === false) return false
     return this.condition(pokemon, player, stageLevel)
   }
 
@@ -323,15 +367,23 @@ export function carryOverPermanentStats(
   pokemonsBeforeEvolution: Pokemon[]
 ) {
   // carry over the permanent stat buffs
-  const permanentBuffStats = ["hp", "atk", "def", "speDef"] as const
-  const baseData = new PokemonClasses[pokemonsBeforeEvolution[0].name]()
+  const permanentBuffStats = [
+    "hp",
+    "maxHP",
+    "atk",
+    "def",
+    "speDef",
+    "speed",
+    "ap",
+    "luck"
+  ] as const
+  const pkm = pokemonsBeforeEvolution[0].name
+  const baseData = PokemonFactory.createPokemonFromName(pkm)
   for (const stat of permanentBuffStats) {
-    const statStacked = sum(
+    const sumOfPermaStatsModifier = sum(
       pokemonsBeforeEvolution.map((p) => p[stat] - baseData[stat])
     )
-    if (statStacked > 0) {
-      pokemonEvolved[stat] += statStacked
-    }
+    pokemonEvolved[stat] += sumOfPermaStatsModifier // can be negative or positive
   }
 
   // carry over TM
@@ -342,5 +394,13 @@ export function carryOverPermanentStats(
     pokemonEvolved.tm = pickRandomIn(existingTms)
     pokemonEvolved.skill = pokemonEvolved.tm
     pokemonEvolved.maxPP = 100
+  }
+}
+
+export class StackBasedEvolutionRule extends ConditionBasedEvolutionRule {
+  constructor(divergentEvolution?: DivergentEvolution) {
+    super((pokemon: Pokemon) => {
+      return pokemon.stacks >= pokemon.stacksRequired
+    }, divergentEvolution)
   }
 }

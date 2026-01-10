@@ -1,8 +1,8 @@
 import { User } from "@firebase/auth-types"
-import { PayloadAction, createSlice } from "@reduxjs/toolkit"
+import { createSlice, PayloadAction } from "@reduxjs/toolkit"
 import { Client, Room } from "colyseus.js"
+import { CollectionUtils } from "../../../core/collection"
 import { IBot } from "../../../models/mongo-models/bot-v2"
-import { IUserMetadata } from "../../../models/mongo-models/user-metadata"
 import AfterGameState from "../../../rooms/states/after-game-state"
 import GameState from "../../../rooms/states/game-state"
 import PreparationState from "../../../rooms/states/preparation-state"
@@ -13,14 +13,20 @@ import {
   Title,
   Transfer
 } from "../../../types"
-import { EloRank } from "../../../types/Config"
+import { ConnectionStatus } from "../../../types/enum/ConnectionStatus"
+import { EloRank } from "../../../types/enum/EloRank"
 import { BotDifficulty } from "../../../types/enum/Game"
 import { Item } from "../../../types/enum/Item"
 import { Language } from "../../../types/enum/Language"
 import { PkmProposition } from "../../../types/enum/Pokemon"
 import { SpecialGameRule } from "../../../types/enum/SpecialGameRule"
-import { logger } from "../../../utils/logger"
+import {
+  IPokemonCollectionItemUnpacked,
+  IUserMetadataJSON,
+  IUserMetadataUnpacked
+} from "../../../types/interfaces/UserMetadata"
 import { getAvatarString } from "../../../utils/avatar"
+import { logger } from "../../../utils/logger"
 
 export interface INetwork {
   client: Client
@@ -30,7 +36,10 @@ export interface INetwork {
   after: Room<AfterGameState> | undefined
   uid: string
   displayName: string
-  profile: IUserMetadata | undefined
+  email: string
+  profile: IUserMetadataUnpacked | undefined
+  pendingGameId: string | null
+  connectionStatus: ConnectionStatus
   error: string | null
 }
 
@@ -47,8 +56,11 @@ const initalState: INetwork = {
   after: undefined,
   uid: "",
   displayName: "",
+  email: "",
   profile: undefined,
-  error: null
+  pendingGameId: null,
+  error: null,
+  connectionStatus: ConnectionStatus.PENDING
 }
 
 export const networkSlice = createSlice({
@@ -59,11 +71,14 @@ export const networkSlice = createSlice({
       if (action.payload) {
         state.uid = action.payload.uid
         state.displayName = action.payload.displayName ?? "Anonymous"
+        state.email = action.payload.email ?? ""
       }
     },
     logOut: (state) => {
       state.client = new Client(endpoint)
       state.uid = ""
+      state.displayName = ""
+      state.email = ""
       state.preparation?.connection.isOpen && state.preparation?.leave(true)
       state.preparation = undefined
       state.lobby?.connection.isOpen && state.lobby?.leave(true)
@@ -73,11 +88,21 @@ export const networkSlice = createSlice({
       state.after?.connection.isOpen && state.after?.leave(true)
       state.after = undefined
     },
-    setProfile: (state, action: PayloadAction<IUserMetadata>) => {
-      state.profile = action.payload
-      state.profile.pokemonCollection = new Map(
-        Object.entries(action.payload.pokemonCollection)
-      )
+    setProfile: (state, action: PayloadAction<IUserMetadataJSON>) => {
+      const unpackedCollection: Map<string, IPokemonCollectionItemUnpacked> =
+        new Map()
+      for (const index in action.payload.pokemonCollection) {
+        const item = action.payload.pokemonCollection[index]
+        unpackedCollection.set(
+          index,
+          CollectionUtils.unpackCollectionItem(item)
+        )
+      }
+
+      state.profile = {
+        ...action.payload,
+        pokemonCollection: unpackedCollection
+      }
     },
     joinLobby: (state, action: PayloadAction<Room<ICustomLobbyState>>) => {
       state.lobby = action.payload
@@ -202,7 +227,11 @@ export const networkSlice = createSlice({
     },
     changeSelectedEmotion: (
       state,
-      action: PayloadAction<{ index: string; emotion: Emotion; shiny: boolean }>
+      action: PayloadAction<{
+        index: string
+        emotion: Emotion | null
+        shiny: boolean
+      }>
     ) => {
       if (state.profile) {
         const pokemonCollectionItem = state.profile.pokemonCollection.get(
@@ -233,7 +262,7 @@ export const networkSlice = createSlice({
     searchById: (state, action: PayloadAction<string>) => {
       state.lobby?.send(Transfer.SEARCH_BY_ID, action.payload)
     },
-    setTitle: (state, action: PayloadAction<Title>) => {
+    setTitle: (state, action: PayloadAction<Title | "">) => {
       if (state.profile) state.profile.title = action.payload
       state.lobby?.send(Transfer.SET_TITLE, action.payload)
     },
@@ -276,22 +305,14 @@ export const networkSlice = createSlice({
     kick: (state, action: PayloadAction<string>) => {
       state.preparation?.send(Transfer.KICK, action.payload)
     },
-    deleteRoom: (state) => {
-      state.preparation?.send(Transfer.DELETE_ROOM)
-    },
     ban: (state, action: PayloadAction<{ uid: string; reason: string }>) => {
       state.lobby?.send(Transfer.BAN, action.payload)
     },
     unban: (state, action: PayloadAction<{ uid: string; name: string }>) => {
       state.lobby?.send(Transfer.UNBAN, action.payload)
     },
-    deleteBotDatabase: (state, action: PayloadAction<string>) => {
-      state.lobby?.send(Transfer.DELETE_BOT_DATABASE, action.payload)
-    },
-    addBotDatabase: (state, action: PayloadAction<string>) => {
-      state.lobby?.send(Transfer.ADD_BOT_DATABASE, action.payload)
-    },
     selectLanguage: (state, action: PayloadAction<Language>) => {
+      if (state.profile) state.profile.language = action.payload
       state.lobby?.send(Transfer.SELECT_LANGUAGE, action.payload)
     },
     createTournament: (
@@ -302,6 +323,12 @@ export const networkSlice = createSlice({
     },
     setErrorAlertMessage: (state, action: PayloadAction<string | null>) => {
       state.error = action.payload
+    },
+    setConnectionStatus: (state, action: PayloadAction<ConnectionStatus>) => {
+      state.connectionStatus = action.payload
+    },
+    setPendingGameId: (state, action: PayloadAction<string | null>) => {
+      state.pendingGameId = action.payload
     }
   }
 })
@@ -310,8 +337,6 @@ export const {
   heapSnapshot,
   selectLanguage,
   unban,
-  deleteBotDatabase,
-  addBotDatabase,
   ban,
   pokemonPropositionClick,
   giveTitle,
@@ -353,10 +378,11 @@ export const {
   searchById,
   setTitle,
   kick,
-  deleteRoom,
   createTournament,
+  setConnectionStatus,
   setErrorAlertMessage,
-  deleteAccount
+  deleteAccount,
+  setPendingGameId
 } = networkSlice.actions
 
 export default networkSlice.reducer

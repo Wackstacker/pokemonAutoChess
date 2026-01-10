@@ -66,14 +66,18 @@
 }
 
 #bot-builder #team-editor tr:nth-child(2) td:nth-child(4) {
-  background-image: url("assets/ui/lightcell.png?raw");
+  background-image: url("assets/environment/lightcell.png?raw");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
 }
 
+.bot-export-modal {
+  max-width: 400px;
+}
+
 .bot-export-modal .error,
 .bot-import-modal .error {
-  background-color: red;
+  color: red;
   font-weight: bold;
 }

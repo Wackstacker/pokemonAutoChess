@@ -19,9 +19,9 @@ import { AccountTab } from "./account-tab"
 import { AvatarTab } from "./avatar-tab"
 import { GadgetsTab } from "./gadgets-tab"
 import GameHistory from "./game-history"
-import { ProfileChatHistory } from "./profile-chat-history"
-import { NameTab } from "./name-tab"
 import PlayerBox from "./player-box"
+import { ProfileChatHistory } from "./profile-chat-history"
+import { ProgressTab } from "./progress-tab"
 import { SearchBar } from "./search-bar"
 import SearchResults from "./search-results"
 import { TitleTab } from "./title-tab"
@@ -46,10 +46,13 @@ export default function Profile() {
     }
   }
 
-  const resetSearch = useCallback((user = searchedUser) => {
-    dispatch(setSearchedUser(user))
-    dispatch(setSuggestions([]))
-  }, [dispatch])
+  const resetSearch = useCallback(
+    (user = searchedUser) => {
+      dispatch(setSearchedUser(user))
+      dispatch(setSuggestions([]))
+    },
+    [dispatch]
+  )
 
   return (
     <div className="profile-modal">
@@ -66,14 +69,21 @@ export default function Profile() {
         {suggestions.length > 0 ? (
           <SearchResults />
         ) : searchedUser ? (
-          <OtherProfileActions rightPanel={rightPanel} setRightPanel={setRightPanel} />
+          <OtherProfileActions
+            rightPanel={rightPanel}
+            setRightPanel={setRightPanel}
+          />
         ) : (
           <MyProfileMenu />
         )}
       </div>
 
-      {rightPanel === "game" && profile && <GameHistory uid={profile.uid} onUpdate={setGameHistory} />}
-      {rightPanel === "chat" && profile && <ProfileChatHistory uid={profile.uid} />}
+      {rightPanel === "game" && profile && (
+        <GameHistory uid={profile.uid} onUpdate={setGameHistory} />
+      )}
+      {rightPanel === "chat" && profile && (
+        <ProfileChatHistory uid={profile.uid} />
+      )}
     </div>
   )
 }
@@ -83,7 +93,7 @@ function MyProfileMenu() {
   return (
     <Tabs>
       <TabList>
-        <Tab>{t("name")}</Tab>
+        <Tab>{t("progress")}</Tab>
         <Tab>{t("avatar")}</Tab>
         <Tab>{t("title_label")}</Tab>
         <Tab>{t("gadgets")}</Tab>
@@ -91,7 +101,7 @@ function MyProfileMenu() {
       </TabList>
 
       <TabPanel>
-        <NameTab />
+        <ProgressTab />
       </TabPanel>
       <TabPanel>
         <AvatarTab />
@@ -110,7 +120,7 @@ function MyProfileMenu() {
 }
 
 function OtherProfileActions(props: {
-  rightPanel: "game" | "chat",
+  rightPanel: "game" | "chat"
   setRightPanel: React.Dispatch<React.SetStateAction<"game" | "chat">>
 }) {
   const { t } = useTranslation()
@@ -133,7 +143,8 @@ function OtherProfileActions(props: {
             })
           )
         }}
-      >{t("give_boosters")}
+      >
+        {t("give_boosters")}
       </button>
     ) : null
 
@@ -260,9 +271,14 @@ function OtherProfileActions(props: {
       {titleButton}
       {user?.banned ? unbanButton : banButton}
       {props.rightPanel === "game" ? chatHistoryButton : gameHistoryButton}
-      {currentUid && user && user.uid !== currentUid && <button className="bubbly blue" onClick={() => dispatch(searchById(currentUid))}>
-        {t("back_to_my_profile")}
-      </button>}
+      {currentUid && user && user.uid !== currentUid && (
+        <button
+          className="bubbly blue"
+          onClick={() => dispatch(searchById(currentUid))}
+        >
+          {t("back_to_my_profile")}
+        </button>
+      )}
     </>
   ) : null
 }

@@ -9,7 +9,8 @@ export const DEPTH = {
   POKEMON_SHADOW: 5,
 
   // 11-20: below pokemon
-  DROP_ZONE: 11,
+  DROP_CELL: 11,
+  LIGHT_CELL: 12,
   HIT_FX_BELOW_POKEMON: 15,
   ABILITY_BELOW_POKEMON: 16,
   BOOST_BACK: 17,
@@ -17,14 +18,14 @@ export const DEPTH = {
   INANIMATE_OBJECTS: 19,
 
   // 21-30: pokemon level
-  POKEMON: 20,
-  POKEMON_ITEM: 21,
+  POKEMON_TROOPER: 20,
+  POKEMON: 21,
+  POKEMON_ITEM: 22,
   BOARD_EFFECT_POKEMON_LEVEL: 23,
   PROJECTILE: 24,
   HIT_FX_ABOVE_POKEMON: 25,
   BOOST_FRONT: 26,
   POKEMON_HP_BAR: 29,
-  POKEMON_GRABBED: 30,
 
   // 31-40: ability sfx over pokemon
   ABILITY_MINOR: 34,
@@ -38,7 +39,7 @@ export const DEPTH = {
   // 51-60: Ingame texts/indicators
   DAMAGE_PORTRAIT: 51,
   DAMAGE_TEXT: 52,
-
+  ITEM_FOUND: 53,
   TEXT_MINOR: 54,
   TEXT: 55,
   TEXT_MAJOR: 56,
@@ -46,8 +47,15 @@ export const DEPTH = {
 
   // 61-70: Popup/Tooltips/HUD
   HUD: 60,
-  PHASER_DOM_CONTAINER: 61,
-  TOOLTIP_BACK: 62,
-  TOOLTIP: 63,
-  TOOLTIP_FRONT: 64
+  DPS_METER: 61,
+  PLAYER_ICON: 62,
+  PHASER_DOM_CONTAINER: 63,
+  MODAL: 64,
+  SELL_ZONE: 65,
+  TOOLTIP_BACK: 66,
+  TOOLTIP: 67,
+  TOOLTIP_FRONT: 68,
+
+  // 71-80: Draggedd elements
+  DRAGGED_POKEMON: 70
 }

@@ -2,18 +2,17 @@ import { GameObjects } from "phaser"
 import PokemonFactory from "../../../../models/pokemon-factory"
 import { AvatarEmotions, Emotion, IPokemonAvatar } from "../../../../types"
 import { GamePhaseState } from "../../../../types/enum/Game"
+import { getAvatarSrc, getAvatarString } from "../../../../utils/avatar"
 import { throttle } from "../../../../utils/function"
-import { SOUNDS, playSound } from "../../pages/utils/audio"
+import { playSound, SOUNDS } from "../../pages/utils/audio"
+import { preference } from "../../preferences"
 import store from "../../stores"
 import { showEmote } from "../../stores/NetworkStore"
-import { getAvatarSrc, getAvatarString } from "../../../../utils/avatar"
+import { DEPTH } from "../depths"
 import GameScene from "../scenes/game-scene"
 import EmoteMenu from "./emote-menu"
 import LifeBar from "./life-bar"
 import PokemonSprite from "./pokemon"
-import { preference } from "../../preferences"
-import { cc } from "../../pages/utils/jsx"
-import { DEPTH } from "../depths"
 
 export default class PokemonAvatar extends PokemonSprite {
   scene: GameScene
@@ -63,12 +62,13 @@ export default class PokemonAvatar extends PokemonSprite {
   }
 
   registerKeys() {
+    const keybindings = preference("keybindings")
     let onKeyA,
       onKeyCtrl,
       onKeyCtrlUp,
       onNumKey = {}
     this.scene.input.keyboard!.on(
-      "keydown-A",
+      "keydown-" + keybindings.emote,
       (onKeyA = () => {
         if (this.isCurrentPlayerAvatar && this.scene && this.scene.game) {
           this.playAnimation()
@@ -115,7 +115,7 @@ export default class PokemonAvatar extends PokemonSprite {
 
     // do not forget to clean up parent listeners after destroy
     this.sprite.once("destroy", () => {
-      this.scene.input.keyboard!.off("keydown-A", onKeyA)
+      this.scene.input.keyboard!.off("keydown-" + keybindings.emote, onKeyA)
       this.scene.input.keyboard!.off("keydown-CTRL", onKeyCtrl)
       this.scene.input.keyboard!.off("keyup-CTRL", onKeyCtrlUp)
       NUM_KEYS.forEach((keycode, i) => {
@@ -165,7 +165,7 @@ export default class PokemonAvatar extends PokemonSprite {
   }
 
   updateLife(life: number) {
-    this.lifebar?.setAmount(life)
+    this.lifebar?.setHp(life)
   }
 
   drawSpeechBubble(emoteAvatar: string, isOpponent: boolean) {
@@ -194,7 +194,7 @@ export default class PokemonAvatar extends PokemonSprite {
       this.scene,
       0,
       28,
-      60,
+      100,
       100,
       0,
       this.isCurrentPlayerAvatar ? 0 : 1,
@@ -207,8 +207,8 @@ export default class PokemonAvatar extends PokemonSprite {
     if (this.isCurrentPlayerAvatar && !this.emoteMenu) {
       this.emoteMenu = new EmoteMenu(
         this.scene as GameScene,
-        this.index,
-        this.shiny,
+        this.pokemon.index,
+        this.pokemon.shiny,
         this.sendEmote
       )
       this.add(this.emoteMenu)
@@ -231,7 +231,9 @@ export default class PokemonAvatar extends PokemonSprite {
     const state = store.getState()
     if (state.game.emotesUnlocked.includes(emotion)) {
       store.dispatch(
-        showEmote(getAvatarString(this.index, this.shiny, emotion))
+        showEmote(
+          getAvatarString(this.pokemon.index, this.pokemon.shiny, emotion)
+        )
       )
       this.hideEmoteMenu()
     }
@@ -276,7 +278,6 @@ export class EmoteBubble extends GameObjects.DOMElement {
 
     const emoteImg = document.createElement("img")
     emoteImg.src = getAvatarSrc(emoteAvatar)
-    emoteImg.className = cc({ pixelated: !preference("antialiasing") })
 
     this.dom.appendChild(emoteImg)
     this.setElement(this.dom)

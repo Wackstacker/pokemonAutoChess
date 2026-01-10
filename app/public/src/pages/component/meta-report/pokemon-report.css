@@ -4,6 +4,12 @@
   flex-direction: column;
 }
 
+#pokemon-report .filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
 #pokemon-report article {
   overflow-y: auto;
 }

@@ -1,7 +1,7 @@
 import Player from "../models/colyseus-models/player"
 import { PokemonActionState } from "../types/enum/Game"
 import { Passive } from "../types/enum/Passive"
-import Board from "./board"
+import type { Board } from "./board"
 import { PokemonEntity } from "./pokemon-entity"
 import PokemonState from "./pokemon-state"
 
@@ -34,7 +34,7 @@ export class IdleState extends PokemonState {
     super.onEnter(pokemon)
     if (pokemon.status.tree) {
       pokemon.action = PokemonActionState.IDLE
-    } else if (pokemon.status.resurecting) {
+    } else if (pokemon.status.resurrecting) {
       pokemon.action = PokemonActionState.HURT
     } else if (
       (pokemon.status.sleep || pokemon.status.freeze) &&
@@ -49,7 +49,6 @@ export class IdleState extends PokemonState {
 
   onExit(pokemon: PokemonEntity) {
     super.onExit(pokemon)
-    pokemon.targetX = -1
-    pokemon.targetY = -1
+    pokemon.setTarget(null)
   }
 }

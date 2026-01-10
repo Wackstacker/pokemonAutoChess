@@ -1,29 +1,37 @@
 import { t } from "i18next"
-import React, { useEffect, useState, useMemo } from "react"
-import ReactDOM from "react-dom"
+import React, { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Tab, TabList, TabPanel, Tabs } from "react-tabs"
-import { Tooltip } from "react-tooltip"
+import { RarityColor } from "../../../../../config"
 import { getPokemonData } from "../../../../../models/precomputed/precomputed-pokemon-data"
 import { PRECOMPUTED_POKEMONS_PER_RARITY } from "../../../../../models/precomputed/precomputed-rarity"
-import { RarityColor } from "../../../../../types/Config"
 import { Ability } from "../../../../../types/enum/Ability"
 import { Rarity } from "../../../../../types/enum/Game"
-import { Pkm, PkmFamily, PkmIndex } from "../../../../../types/enum/Pokemon"
+import {
+  NonPkm,
+  Pkm,
+  PkmFamily,
+  PkmIndex
+} from "../../../../../types/enum/Pokemon"
 import { IPokemonData } from "../../../../../types/interfaces/PokemonData"
 import { groupBy } from "../../../../../utils/array"
 import { getPortraitSrc } from "../../../../../utils/avatar"
+import { usePreferences } from "../../../preferences"
 import { cc } from "../../utils/jsx"
-import { GamePokemonDetail } from "../game/game-pokemon-detail"
+import { Checkbox } from "../checkbox/checkbox"
+import { GamePokemonDetailTooltip } from "../game/game-pokemon-detail"
+import PokemonPortrait from "../pokemon-portrait"
 import { PokemonTypeahead } from "../typeahead/pokemon-typeahead"
 import WikiPokemonDetail from "./wiki-pokemon-detail"
-import PokemonPortrait from "../pokemon-portrait"
 
 export default function WikiPokemons() {
   const { t } = useTranslation()
+  const [preferences, setPreferences] = usePreferences()
   const tabs = Object.values(Rarity) as Rarity[]
   const [selectedPkm, setSelectedPkm] = useState<Pkm | "">("")
   const [tabIndex, setTabIndex] = useState(0)
+  const [pool, setPool] = useState<string>("all")
+
   useEffect(() => {
     if (selectedPkm) {
       setTabIndex(tabs.indexOf(getPokemonData(selectedPkm).rarity))
@@ -39,10 +47,33 @@ export default function WikiPokemons() {
         setTabIndex(index)
       }}
     >
-      <PokemonTypeahead
-        value={selectedPkm}
-        onChange={(pkm) => setSelectedPkm(pkm)}
-      />
+      <div className="filters">
+        <Checkbox
+          checked={preferences.showEvolutions}
+          onToggle={(checked) => {
+            setPreferences({ showEvolutions: checked })
+          }}
+          label={t("show_evolutions")}
+          isDark
+        />
+        <select value={pool} onChange={(e) => setPool(e.target.value)}>
+          <option value={"all"}>
+            {t("pool_label")}: {t("all")}
+          </option>
+          {["regular", "additional", "regional"].map((p) => (
+            <option value={p} key={p}>
+              {t(`pool.${p}`)}
+            </option>
+          ))}
+          <option value={"special"} key={"special"}>
+            {t(`rarity.SPECIAL`)}
+          </option>
+        </select>
+        <PokemonTypeahead
+          value={selectedPkm}
+          onChange={(pkm) => setSelectedPkm(pkm)}
+        />
+      </div>
       <TabList>
         {tabs.map((r) => {
           return (
@@ -61,6 +92,8 @@ export default function WikiPokemons() {
               rarity={r}
               selected={selectedPkm}
               onSelect={setSelectedPkm}
+              showEvolutions={preferences.showEvolutions}
+              pool={pool}
             />
           </TabPanel>
         )
@@ -75,18 +108,37 @@ export default function WikiPokemons() {
 export function WikiPokemon(props: {
   rarity: Rarity
   selected: Pkm | ""
+  showEvolutions: boolean
+  pool: string
   onSelect: (pkm: Pkm) => void
 }) {
   const pokemons = useMemo(
     () =>
-      (PRECOMPUTED_POKEMONS_PER_RARITY[props.rarity])
-        .filter((p) => p !== Pkm.DEFAULT)
+      PRECOMPUTED_POKEMONS_PER_RARITY[props.rarity]
+        .filter((p) => {
+          if (NonPkm.includes(p)) return false
+          const { additional, regional } = getPokemonData(p)
+          const special = props.rarity === Rarity.SPECIAL
+          if (props.pool === "additional" && !additional) return false
+          if (props.pool === "regional" && !regional) return false
+          if (props.pool === "special" && !special) return false
+          if (props.pool === "regular" && (additional || regional || special))
+            return false
+
+          if (
+            !props.showEvolutions &&
+            PkmFamily[p] !== p &&
+            getPokemonData(PkmFamily[p]).stars !== getPokemonData(p).stars
+          )
+            return false
+          return true
+        })
         .sort((a: Pkm, b: Pkm) => {
           return PkmFamily[a] === PkmFamily[b]
             ? getPokemonData(a).stars - getPokemonData(b).stars
             : PkmIndex[PkmFamily[a]].localeCompare(PkmIndex[PkmFamily[b]])
         }),
-    [props.rarity]
+    [props.rarity, props.pool, props.showEvolutions]
   ) as Pkm[]
 
   return (
@@ -136,8 +188,6 @@ export function WikiAllPokemons() {
     })
   }
 
-  const [hoveredPokemon, setHoveredPokemon] = useState<Pkm>()
-
   return (
     <>
       <div id="wiki-pokemons-all">
@@ -154,10 +204,8 @@ export function WikiAllPokemons() {
                         additional: p.additional,
                         regional: p.regional
                       })}
-                      onMouseOver={() => {
-                        setHoveredPokemon(p.name)
-                      }}
-                      data-tooltip-id="pokemon-detail"
+                      data-tooltip-id="game-pokemon-detail-tooltip"
+                      data-tooltip-content={p.name}
                     >
                       <img src={getPortraitSrc(p.index)} />
                     </li>
@@ -168,13 +216,7 @@ export function WikiAllPokemons() {
           )
         })}
       </div>
-      {hoveredPokemon && <Tooltip
-        id="pokemon-detail"
-        className="custom-theme-tooltip game-pokemon-detail-tooltip"
-        float
-      >
-        <GamePokemonDetail pokemon={hoveredPokemon} />
-      </Tooltip>}
+      <GamePokemonDetailTooltip origin="wiki" />
     </>
   )
 }

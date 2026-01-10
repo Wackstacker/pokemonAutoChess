@@ -1,16 +1,19 @@
 import React from "react"
 import { useTranslation } from "react-i18next"
 import { getRankLabel } from "../../../../../../app/types/strings/Strings"
+import { ExpPlace, SynergyTriggers } from "../../../../../config"
 import { computeElo } from "../../../../../core/elo"
 import { Role } from "../../../../../types"
-import { ExpPlace, SynergyTriggers } from "../../../../../types/Config"
+import { GameMode } from "../../../../../types/enum/Game"
 import { Synergy } from "../../../../../types/enum/Synergy"
+import { ItemDetailTooltip } from "../../../game/components/item-detail"
 import { useAppSelector } from "../../../hooks"
+import { GamePokemonDetailTooltip } from "../game/game-pokemon-detail"
+import { GameModeIcon } from "../icons/game-mode-icon"
 import SynergyIcon from "../icons/synergy-icon"
 import { Avatar } from "../profile/avatar"
 import Team from "./team"
 import "./after-menu.css"
-import { GameMode } from "../../../../../types/enum/Game"
 
 export default function AfterMenu() {
   const { t } = useTranslation()
@@ -18,17 +21,24 @@ export default function AfterMenu() {
     .slice()
     .sort((a, b) => a.rank - b.rank)
 
-  const elligibleToXP = useAppSelector((state) => state.after.elligibleToXP)
-  const elligibleToELO = useAppSelector((state) => state.after.elligibleToELO)
+  const eligibleToXP = useAppSelector((state) => state.after.eligibleToXP)
+  const eligibleToELO = useAppSelector((state) => state.after.eligibleToELO)
   const gameMode = useAppSelector((state) => state.after.gameMode)
   const currentPlayerId: string = useAppSelector((state) => state.network.uid)
   const currentPlayer = players.find((p) => p.id === currentPlayerId)
   const playerRank = currentPlayer ? currentPlayer.rank : null
   const humans = players.filter((p) => p.role !== Role.BOT)
   const newElo = currentPlayer
-    ? computeElo(currentPlayer, currentPlayer.rank, currentPlayer.elo, humans, gameMode)
+    ? computeElo(
+        currentPlayer,
+        currentPlayer.rank,
+        currentPlayer.elo,
+        humans,
+        gameMode,
+        false
+      )
     : null
-  const shouldShowElo = elligibleToELO && currentPlayer && newElo
+  const shouldShowElo = eligibleToELO && currentPlayer && newElo
 
   return (
     <div className="after-menu">
@@ -42,29 +52,8 @@ export default function AfterMenu() {
               <span>{getRankLabel(playerRank)}</span>
             </div>
             <p className="gamemode">
-              {gameMode === GameMode.SCRIBBLE && <>
-                <img
-                  alt={t("smeargle_scribble")}
-                  className="scribble icon"
-                  src="/assets/ui/scribble.png"
-                  draggable="false"
-                />
-                {t("smeargle_scribble")}
-              </>}
-              {gameMode === GameMode.CUSTOM_LOBBY && t("custom_room")}
-              {gameMode === GameMode.QUICKPLAY && <>
-                <img
-                  alt={t("quick_play")}
-                  className="quickplay icon"
-                  src="/assets/ui/quickplay.png"
-                  draggable="false"
-                />
-                {t("quick_play")}
-              </>}
-              {gameMode === GameMode.RANKED && <>
-                <img src="assets/ui/game_modes/ranked.png" alt={t("ranked_match")} className="ranked icon" draggable="false" />
-                {t("ranked_match")}
-              </>}
+              <GameModeIcon gameMode={gameMode} />
+              {t(`game_modes.${gameMode}`)}
             </p>
             <div className="player-gains">
               {shouldShowElo && (
@@ -75,7 +64,7 @@ export default function AfterMenu() {
                   )
                 </p>
               )}
-              {elligibleToXP && (
+              {eligibleToXP && (
                 <p className="player-exp">EXP + {ExpPlace[playerRank - 1]}</p>
               )}
             </div>
@@ -107,9 +96,30 @@ export default function AfterMenu() {
                     />
                   </td>
                   <td>
-                    <p title={t("total_money_earned")}><img src="assets/icons/money_total.svg" alt="$" style={{ width: "24px", height: "24px" }} /> {v.moneyEarned}</p>
-                    <p title={t("total_player_damage_dealt")}><img src="assets/icons/ATK.png" alt="✊" style={{ width: "24px", height: "24px" }} />{v.playerDamageDealt}</p>
-                    <p title={t("total_reroll_count")}><img src="assets/ui/refresh.svg" alt="↻" style={{ width: "24px", height: "24px" }} /> {v.rerollCount}</p>
+                    <p title={t("total_money_earned")}>
+                      <img
+                        src="assets/icons/money_total.svg"
+                        alt="$"
+                        style={{ width: "24px", height: "24px" }}
+                      />{" "}
+                      {v.moneyEarned}
+                    </p>
+                    <p title={t("total_player_damage_dealt")}>
+                      <img
+                        src="assets/icons/ATK.png"
+                        alt="✊"
+                        style={{ width: "24px", height: "24px" }}
+                      />
+                      {v.playerDamageDealt}
+                    </p>
+                    <p title={t("total_reroll_count")}>
+                      <img
+                        src="assets/ui/refresh.svg"
+                        alt="↻"
+                        style={{ width: "24px", height: "24px" }}
+                      />{" "}
+                      {v.rerollCount}
+                    </p>
                   </td>
                   <td>
                     <Team team={v.pokemons} />
@@ -130,6 +140,8 @@ export default function AfterMenu() {
           </tbody>
         </table>
       </div>
+      <GamePokemonDetailTooltip origin="after" />
+      <ItemDetailTooltip />
     </div>
   )
 }

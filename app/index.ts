@@ -25,15 +25,13 @@ I think the buffer size is a bit of a sanity check, the only time I've really se
 Encoder.BUFFER_SIZE = 512 * 1024
 
 async function main() {
-  fetchLeaderboards()
-  setInterval(() => fetchLeaderboards(), 1000 * 60 * 10) // refresh every 10 minutes
-  fetchMetaReports()
-  setInterval(() => fetchMetaReports(), 1000 * 60 * 60 * 24) // refresh every 24 hours
-
   if (process.env.NODE_APP_INSTANCE) {
+    const processNumber = Number(process.env.NODE_APP_INSTANCE ?? "0")
+    const port = (Number(process.env.PORT) ?? 2569) + processNumber
     initializeMetrics()
     await listen(app)
-    if (process.env.PORT && parseInt(process.env.PORT) === 2567) {
+    if (port === 2569) {
+      // only the first thread of the first instance will create the lobby and init cron jobs
       await matchMaker.createRoom("lobby", {})
       checkLobby()
       initCronJobs()
@@ -43,6 +41,13 @@ async function main() {
     await matchMaker.createRoom("lobby", {})
     initCronJobs()
   }
+
+  logger.info("Fetching leaderboards...")
+  fetchLeaderboards()
+  setInterval(() => fetchLeaderboards(), 1000 * 60 * 10) // refresh every 10 minutes
+  logger.info("Fetching meta reports...")
+  fetchMetaReports()
+  setInterval(() => fetchMetaReports(), 1000 * 60 * 60 * 24) // refresh every 24 hours
 }
 
 function checkLobby() {
@@ -51,9 +56,33 @@ function checkLobby() {
     cronTime: "* * * * *",
     timeZone: "Europe/Paris",
     onTick: async () => {
-      logger.debug(`Refresh lobby room`)
       const lobbies = await matchMaker.query({ name: "lobby" })
       if (lobbies.length === 0) {
+        logger.warn(
+          `Lobby room has not been found, retrying 2 times before recreating...`
+        )
+
+        // Retry 2 times with 10 second wait between attempts
+        let retryCount = 0
+        const maxRetries = 2
+
+        while (retryCount < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 10000)) // Wait 10 seconds
+          retryCount++
+
+          const retriedLobbies = await matchMaker.query({ name: "lobby" })
+          if (retriedLobbies.length > 0) {
+            logger.info(`Lobby room found on retry attempt ${retryCount}`)
+            return
+          }
+          logger.warn(
+            `Retry attempt ${retryCount}/${maxRetries} failed, lobby still not found`
+          )
+        }
+
+        logger.warn(
+          `All retry attempts failed, automatically remaking lobby room`
+        )
         matchMaker.createRoom("lobby", {})
       }
     },

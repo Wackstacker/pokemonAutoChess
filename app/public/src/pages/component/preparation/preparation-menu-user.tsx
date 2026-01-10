@@ -8,6 +8,7 @@ import { RemoveButton } from "../buttons/remove-button"
 import { EloBadge } from "../profile/elo-badge"
 import { InlineAvatar } from "../profile/inline-avatar"
 import "./preparation-menu-user.css"
+import { preference } from "../../../preferences"
 
 export default function PreparationMenuUser(props: {
   key: string
@@ -41,8 +42,9 @@ export default function PreparationMenuUser(props: {
 
   return (
     <div
-      className={`my-container player my-box preparation-menu-user ${props.user.ready ? "ready" : "not-ready"
-        }`}
+      className={`my-container player my-box preparation-menu-user ${
+        props.user.ready ? "ready" : "not-ready"
+      }`}
     >
       <EloBadge elo={props.user?.elo} />
       <InlineAvatar
@@ -51,6 +53,7 @@ export default function PreparationMenuUser(props: {
         title={props.user?.title}
         role={props.user?.role}
       />
+      {preference("colorblindMode") && props.user.ready && t("ready")}
       {removeButton}
     </div>
   )

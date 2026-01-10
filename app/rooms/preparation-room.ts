@@ -1,17 +1,19 @@
 import { Dispatcher } from "@colyseus/command"
 import { Client, ClientArray, Room, updateLobby } from "colyseus"
 import admin from "firebase-admin"
+import { UserRecord } from "firebase-admin/lib/auth/user-record"
+import { MAX_PLAYERS_PER_GAME } from "../config"
 import { IBot } from "../models/mongo-models/bot-v2"
 import UserMetadata from "../models/mongo-models/user-metadata"
 import { IPreparationMetadata, Role, Transfer } from "../types"
-import { EloRank, MAX_PLAYERS_PER_GAME } from "../types/Config"
 import { CloseCodes } from "../types/enum/CloseCodes"
+import { EloRank } from "../types/enum/EloRank"
 import { BotDifficulty, GameMode } from "../types/enum/Game"
 import { logger } from "../utils/logger"
 import { values } from "../utils/schemas"
 import {
   OnAddBotCommand,
-  OnDeleteRoomCommand,
+  OnChangeNoEloCommand,
   OnGameStartRequestCommand,
   OnJoinCommand,
   OnKickPlayerCommand,
@@ -22,21 +24,21 @@ import {
   OnRoomChangeSpecialRule,
   OnRoomNameCommand,
   OnRoomPasswordCommand,
-  OnChangeNoEloCommand,
   OnToggleReadyCommand,
   RemoveMessageCommand
 } from "./commands/preparation-commands"
 import PreparationState from "./states/preparation-state"
-import { UserRecord } from "firebase-admin/lib/auth/user-record"
 
 export default class PreparationRoom extends Room<PreparationState> {
   dispatcher: Dispatcher<this>
   clients!: ClientArray<undefined, UserRecord>
+  private roomPassword: string | null
 
   constructor() {
     super()
     this.dispatcher = new Dispatcher(this)
     this.maxClients = MAX_PLAYERS_PER_GAME
+    this.roomPassword = null
   }
 
   async setName(name: string) {
@@ -47,11 +49,13 @@ export default class PreparationRoom extends Room<PreparationState> {
     updateLobby(this)
   }
 
-  async setPassword(password: string) {
+  async setPassword(password: string | null) {
+    const hasPassword = password && password.trim().length > 0
     await this.setMetadata(<IPreparationMetadata>{
-      password: password,
+      passwordProtected: hasPassword,
       type: "preparation"
     })
+    this.roomPassword = hasPassword ? password : null
     updateLobby(this)
   }
 
@@ -95,10 +99,10 @@ export default class PreparationRoom extends Room<PreparationState> {
 
     // logger.debug(defaultRoomName);
     this.state = new PreparationState(options)
+    this.setPassword(options.password ?? null)
     this.setMetadata(<IPreparationMetadata>{
       name: options.roomName.slice(0, 30),
-      ownerName:
-        options.gameMode === GameMode.QUICKPLAY ? null : options.ownerId,
+      ownerName: options.gameMode === GameMode.CLASSIC ? null : options.ownerId,
       minRank: options.minRank ?? null,
       maxRank: options.maxRank ?? null,
       noElo: options.noElo ?? false,
@@ -109,7 +113,9 @@ export default class PreparationRoom extends Room<PreparationState> {
       tournamentId: options.tournamentId ?? null,
       bracketId: options.bracketId ?? null,
       gameStartedAt: null,
-      password: options.password ?? null,
+      passwordProtected: !!(
+        options.password && options.password.trim().length > 0
+      ),
       type: "preparation"
     })
     this.maxClients = 8
@@ -188,15 +194,6 @@ export default class PreparationRoom extends Room<PreparationState> {
       logger.info(Transfer.KICK, this.roomName)
       try {
         this.dispatcher.dispatch(new OnKickPlayerCommand(), { client, message })
-      } catch (error) {
-        logger.error(error)
-      }
-    })
-
-    this.onMessage(Transfer.DELETE_ROOM, (client) => {
-      logger.info(Transfer.DELETE_ROOM, this.roomName)
-      try {
-        this.dispatcher.dispatch(new OnDeleteRoomCommand(), { client })
       } catch (error) {
         logger.error(error)
       }
@@ -339,15 +336,10 @@ export default class PreparationRoom extends Room<PreparationState> {
 
     this.onServerAnnouncement = this.onServerAnnouncement.bind(this)
     this.presence.subscribe("server-announcement", this.onServerAnnouncement)
-
     this.onGameStart = this.onGameStart.bind(this)
     this.presence.subscribe("game-started", this.onGameStart)
-
-    this.presence.subscribe("room-deleted", (roomId) => {
-      if (this.roomId === roomId) {
-        this.disconnect(CloseCodes.ROOM_DELETED)
-      }
-    })
+    this.onRoomDeleted = this.onRoomDeleted.bind(this)
+    this.presence.subscribe("room-deleted", this.onRoomDeleted)
   }
 
   async onAuth(client: Client, options, context) {
@@ -356,7 +348,18 @@ export default class PreparationRoom extends Room<PreparationState> {
       const user = await admin.auth().getUser(token.uid)
       const userProfile = await UserMetadata.findOne({ uid: user.uid })
       const isAdmin = userProfile?.role === Role.ADMIN
-      client.send(Transfer.USER_PROFILE, userProfile)
+
+      // Check password protection - room owner, admins and moderators bypass password protection
+      if (
+        this.state.password &&
+        userProfile?.role === Role.BASIC &&
+        this.state.ownerId !== user.uid
+      ) {
+        if (!options.password || options.password !== this.roomPassword) {
+          client.leave(CloseCodes.INVALID_PASSWORD)
+          return
+        }
+      }
 
       const isAlreadyInRoom = this.state.users.has(user.uid)
       const numberOfHumanPlayers = values(this.state.users).filter(
@@ -364,22 +367,33 @@ export default class PreparationRoom extends Room<PreparationState> {
       ).length
 
       if (numberOfHumanPlayers >= MAX_PLAYERS_PER_GAME && !isAdmin) {
-        throw "Room is full"
+        client.leave(CloseCodes.ROOM_FULL)
+        return
       } else if (isAlreadyInRoom) {
-        throw "Already joined"
+        client.leave(CloseCodes.USER_ALREADY_JOINED)
+        return
       } else if (this.state.gameStartedAt != null) {
-        throw "Game already started"
-      } else if (!user.displayName) {
-        throw "No display name"
+        client.leave(CloseCodes.GAME_ALREADY_STARTED)
+        return
       } else if (userProfile?.banned) {
-        throw "User banned"
+        client.leave(CloseCodes.USER_BANNED)
+        return
       } else if (this.metadata.blacklist.includes(user.uid)) {
-        throw "User previously kicked"
+        client.leave(CloseCodes.USER_KICKED)
+        return
+      } else if (
+        this.metadata.whitelist &&
+        this.metadata.whitelist.length > 0 &&
+        !this.metadata.whitelist.includes(user.uid)
+      ) {
+        client.leave(CloseCodes.USER_NOT_WHITELISTED)
+        return
       } else {
         return user
       }
     } catch (error) {
       logger.error(error)
+      client.leave(CloseCodes.ABNORMAL_CLOSURE)
     }
   }
 
@@ -428,6 +442,7 @@ export default class PreparationRoom extends Room<PreparationState> {
     this.dispatcher.stop()
     this.presence.unsubscribe("server-announcement", this.onServerAnnouncement)
     this.presence.unsubscribe("game-started", this.onGameStart)
+    this.presence.unsubscribe("room-deleted", this.onRoomDeleted)
   }
 
   onServerAnnouncement(message: string) {
@@ -442,12 +457,21 @@ export default class PreparationRoom extends Room<PreparationState> {
   onGameStart({
     gameId,
     preparationId
-  }: { gameId: string; preparationId: string }) {
+  }: {
+    gameId: string
+    preparationId: string
+  }) {
     if (this.roomId === preparationId) {
       this.lock()
       this.setGameStarted(new Date().toISOString())
       //logger.debug("game start", game.roomId)
       this.broadcast(Transfer.GAME_START, gameId)
+    }
+  }
+
+  onRoomDeleted(roomId) {
+    if (this.roomId === roomId) {
+      this.disconnect(CloseCodes.ROOM_DELETED)
     }
   }
 

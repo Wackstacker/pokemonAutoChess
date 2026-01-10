@@ -1,18 +1,16 @@
+import { BASE_PROJECTILE_SPEED } from "../config"
 import Player from "../models/colyseus-models/player"
+import { IPokemonEntity } from "../types"
+import delays from "../types/delays.json"
+import { EffectEnum } from "../types/enum/Effect"
 import { PokemonActionState } from "../types/enum/Game"
-import { Weather } from "../types/enum/Weather"
 import { distanceC } from "../utils/distance"
-import { chance } from "../utils/random"
-import { AbilityStrategies } from "./abilities/abilities"
-import Board from "./board"
+import { max } from "../utils/number"
+import { castAbility } from "./abilities/abilities"
+import type { Board } from "./board"
 import { PokemonEntity } from "./pokemon-entity"
 import PokemonState from "./pokemon-state"
 import { AttackCommand } from "./simulation-command"
-import delays from "../types/delays.json"
-import { IPokemonEntity } from "../types"
-import { PROJECTILE_SPEED } from "../types/Config"
-import { max } from "../utils/number"
-import { Effect } from "../types/enum/Effect"
 
 export default class AttackingState extends PokemonState {
   name = "attacking"
@@ -21,75 +19,66 @@ export default class AttackingState extends PokemonState {
     super.update(pokemon, dt, board, player)
 
     if (pokemon.cooldown <= 0) {
-      pokemon.cooldown = Math.round(1000 / (0.4 + pokemon.speed * 0.007))
+      const speed = pokemon.status.paralysis ? pokemon.speed / 2 : pokemon.speed
+      pokemon.resetCooldown(1000, speed)
 
       // first, try to hit the same target than previous attack
-      let target = board.getValue(pokemon.targetX, pokemon.targetY)
-      let targetCoordinate: { x: number; y: number } | undefined = {
-        x: pokemon.targetX,
-        y: pokemon.targetY
-      }
+      let target = board.getEntityOnCell(pokemon.targetX, pokemon.targetY)
 
-      if (pokemon.status.confusion) {
-        targetCoordinate = this.getTargetCoordinateWhenConfused(pokemon, board)
-      } else if (
-        !(
-          target &&
-          target.isTargettableBy(pokemon) &&
+      if (pokemon.effects.has(EffectEnum.MERCILESS)) {
+        const candidates = this.getTargetsAtRange(pokemon, board)
+        let minLife = Infinity
+        for (const candidate of candidates) {
+          if (candidate.hp + candidate.shield < minLife) {
+            minLife = candidate.hp + candidate.shield
+            target = candidate
+          }
+        }
+      } else if (pokemon.status.confusion) {
+        target = this.getTargetWhenConfused(pokemon, board)
+      } else if (!target || target.id !== pokemon.targetEntityId) {
+        // previous target has moved, check if still at range
+        const previousTarget =
+          pokemon.simulation.blueTeam.get(pokemon.targetEntityId) ||
+          pokemon.simulation.redTeam.get(pokemon.targetEntityId)
+        if (
+          previousTarget &&
+          previousTarget.isTargettableBy(pokemon) &&
           distanceC(
             pokemon.positionX,
             pokemon.positionY,
-            targetCoordinate.x,
-            targetCoordinate.y
+            previousTarget?.positionX,
+            previousTarget?.positionY
           ) <= pokemon.range
-        )
-      ) {
-        // if target is no longer alive or at range, retargeting
-        targetCoordinate = this.getNearestTargetAtRangeCoordinates(
-          pokemon,
-          board
-        )
-        if (targetCoordinate) {
-          target = board.getValue(targetCoordinate.x, targetCoordinate.y)
+        ) {
+          // updating target coordinates
+          target = previousTarget as PokemonEntity
+        } else {
+          // if target is no longer alive or at range, retargeting
+          target = this.getNearestTargetAtRange(pokemon, board)
         }
       }
 
       // no target at range, changing to moving state
-      if (!target || !targetCoordinate || pokemon.status.charm) {
-        const targetAtSight = this.getNearestTargetAtSightCoordinates(
-          pokemon,
-          board
-        )
+      if (!target || pokemon.status.charm) {
+        const targetAtSight = this.getNearestTargetAtSight(pokemon, board)
         if (targetAtSight) {
           pokemon.toMovingState()
         }
-      } else if (
-        target &&
-        pokemon.pp >= pokemon.maxPP &&
-        !pokemon.status.silence
-      ) {
+      } else if (pokemon.pp >= pokemon.maxPP && !pokemon.status.silence) {
         // CAST ABILITY
-        let crit = false
-        if (pokemon.effects.has(Effect.ABILITY_CRIT)) {
-          crit = chance(pokemon.critChance / 100, pokemon)
-        }
-        AbilityStrategies[pokemon.skill].process(
-          pokemon,
-          this,
-          board,
-          target,
-          crit
-        )
+        castAbility(pokemon.skill, pokemon, board, target)
       } else {
         // BASIC ATTACK
         pokemon.count.attackCount++
-        pokemon.targetX = targetCoordinate.x
-        pokemon.targetY = targetCoordinate.y
+        pokemon.targetX = target.positionX
+        pokemon.targetY = target.positionY
+        pokemon.targetEntityId = target.id
         pokemon.orientation = board.orientation(
           pokemon.positionX,
           pokemon.positionY,
-          targetCoordinate.x,
-          targetCoordinate.y,
+          pokemon.targetX,
+          pokemon.targetY,
           pokemon,
           target
         )
@@ -117,8 +106,7 @@ export default class AttackingState extends PokemonState {
 
   onExit(pokemon) {
     super.onExit(pokemon)
-    pokemon.targetX = -1
-    pokemon.targetY = -1
+    pokemon.setTarget(null)
   }
 }
 
@@ -127,7 +115,8 @@ export function getAttackTimings(pokemon: IPokemonEntity): {
   travelTime: number
   attackDuration: number
 } {
-  const attackDuration = 1000 / pokemon.speed
+  const speed = pokemon.status.paralysis ? pokemon.speed / 2 : pokemon.speed
+  const attackDuration = 1000 / (0.4 + speed * 0.007)
   const d = delays[pokemon.index]?.d || 18 // number of frames before hit
   const t = delays[pokemon.index]?.t || 36 // total number of frames in the animation
 
@@ -138,6 +127,7 @@ export function getAttackTimings(pokemon: IPokemonEntity): {
     pokemon.positionX,
     pokemon.positionY
   )
-  const travelTime = (distance * 1000) / PROJECTILE_SPEED
+  const travelTime =
+    (distance * 1000) / (BASE_PROJECTILE_SPEED * (1 + speed / 100))
   return { delayBeforeShoot, travelTime, attackDuration }
 }

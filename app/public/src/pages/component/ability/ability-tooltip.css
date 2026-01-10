@@ -35,6 +35,10 @@ h2 .description-icon > img {
   vertical-align: -0.25em;
 }
 
+.technical-term {
+  cursor: help;
+}
+
 .ability-description {
   white-space: pre-line;
 }
@@ -71,8 +75,12 @@ h2 .description-icon > img {
 }
 
 .status-label {
-  color: rgb(210, 190, 150);
+  color: #f5a9a9;
   font-weight: 500;
+}
+
+.status-label.positive {
+  color: #a9f5ad;
 }
 
 .item-label {

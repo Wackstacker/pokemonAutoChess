@@ -5,25 +5,21 @@ import {
   SetSchema,
   type
 } from "@colyseus/schema"
+import { BOARD_HEIGHT, BOARD_WIDTH, StageDuration } from "../../config"
 import BotManager from "../../core/bot-manager"
 import Simulation from "../../core/simulation"
+import { TownEncounter } from "../../core/town-encounters"
 import { FloatingItem } from "../../models/colyseus-models/floating-item"
 import Player from "../../models/colyseus-models/player"
 import { PokemonAvatarModel } from "../../models/colyseus-models/pokemon-avatar"
 import { Portal, SynergySymbol } from "../../models/colyseus-models/portal"
 import Shop from "../../models/shop"
-import {
-  BOARD_HEIGHT,
-  BOARD_WIDTH,
-  EloRank,
-  StageDuration
-} from "../../types/Config"
+import { EloRank } from "../../types/enum/EloRank"
 import { GameMode, GamePhaseState } from "../../types/enum/Game"
 import { Item } from "../../types/enum/Item"
 import { Pkm } from "../../types/enum/Pokemon"
 import { SpecialGameRule } from "../../types/enum/SpecialGameRule"
 import { Weather } from "../../types/enum/Weather"
-import { TownEncounter } from "../../core/town-encounters"
 import { pickRandomIn, randomBetween } from "../../utils/random"
 
 export default class GameState extends Schema {
@@ -39,6 +35,7 @@ export default class GameState extends Schema {
   @type(["string"]) additionalPokemons = new ArraySchema<Pkm>()
   @type("uint8") stageLevel = 0
   @type("string") weather: Weather
+  @type("boolean") shinyEncounter = false
   @type("boolean") noElo = false
   @type("string") gameMode: GameMode = GameMode.CUSTOM_LOBBY
   @type({ set: "string" }) spectators = new SetSchema<string>()
@@ -51,19 +48,18 @@ export default class GameState extends Schema {
   updatePhaseNeeded = false
   botManager: BotManager = new BotManager()
   shop: Shop = new Shop()
+  simulationPaused = false
   gameFinished = false
   gameLoaded = false
   name: string
   startTime: number
   endTime: number | undefined = undefined
   preparationId: string
-  shinyEncounter = false
   townEncounters: Set<TownEncounter> = new Set<TownEncounter>()
   pveRewards: Item[] = []
   pveRewardsPropositions: Item[] = []
   minRank: EloRank | null = null
   maxRank: EloRank | null = null
-  wanderers: Map<string, Pkm> = new Map<string, Pkm>()
 
   constructor(
     preparationId: string,

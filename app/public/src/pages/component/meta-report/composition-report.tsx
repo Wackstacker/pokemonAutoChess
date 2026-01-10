@@ -1,6 +1,6 @@
 import { t } from "i18next"
 import React, { useEffect, useMemo, useState } from "react"
-import { IMeta, fetchMeta } from "../../../../../models/mongo-models/meta"
+import { fetchMeta, IMeta } from "../../../../../models/mongo-models/meta"
 import { MetaChart } from "./meta-chart"
 import TeamComp from "./team-comp"
 import "./composition-report.css"
@@ -39,10 +39,7 @@ export function CompositionReport() {
     <div id="meta-report-compo">
       <header>
         <h2>{t("best_team_compositions")}</h2>
-        <select
-          value={rankingBy}
-          onChange={(e) => setRanking(e.target.value)}
-        >
+        <select value={rankingBy} onChange={(e) => setRanking(e.target.value)}>
           <option value="count">
             {t("rank")} {t("by_poularity")}
           </option>

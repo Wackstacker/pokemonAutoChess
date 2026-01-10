@@ -2,10 +2,10 @@ import { ArraySchema, MapSchema, Schema, type } from "@colyseus/schema"
 import { nanoid } from "nanoid"
 import { GameUser } from "../../models/colyseus-models/game-user"
 import Message from "../../models/colyseus-models/message"
-import { EloRank } from "../../types/Config"
+import chatV2 from "../../models/mongo-models/chat-v2"
+import { EloRank } from "../../types/enum/EloRank"
 import { GameMode } from "../../types/enum/Game"
 import { SpecialGameRule } from "../../types/enum/SpecialGameRule"
-import chatV2 from "../../models/mongo-models/chat-v2"
 
 export interface IPreparationState {
   users: MapSchema<GameUser>

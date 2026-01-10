@@ -1,30 +1,28 @@
 import { Dispatcher } from "@colyseus/command"
-import { Client, IRoomCache, Room, matchMaker, subscribeLobby } from "colyseus"
+import { Client, IRoomCache, matchMaker, Room, subscribeLobby } from "colyseus"
 import { CronJob } from "cron"
 import admin from "firebase-admin"
-import Message from "../models/colyseus-models/message"
-import { TournamentSchema } from "../models/colyseus-models/tournament"
-import { IBot } from "../models/mongo-models/bot-v2"
-import ChatV2 from "../models/mongo-models/chat-v2"
-import Tournament from "../models/mongo-models/tournament"
-import UserMetadata, {
-  IUserMetadata
-} from "../models/mongo-models/user-metadata"
-import { Emotion, IPlayer, Role, Title, Transfer } from "../types"
 import {
   INACTIVITY_TIMEOUT,
   MAX_CONCURRENT_PLAYERS_ON_LOBBY,
   MAX_CONCURRENT_PLAYERS_ON_SERVER,
   TOURNAMENT_CLEANUP_DELAY,
   TOURNAMENT_REGISTRATION_TIME
-} from "../types/Config"
+} from "../config"
+import Message from "../models/colyseus-models/message"
+import { TournamentSchema } from "../models/colyseus-models/tournament"
+import { IBot } from "../models/mongo-models/bot-v2"
+import ChatV2 from "../models/mongo-models/chat-v2"
+import Tournament from "../models/mongo-models/tournament"
+import UserMetadata from "../models/mongo-models/user-metadata"
+import { Emotion, Role, Title, Transfer } from "../types"
 import { CloseCodes } from "../types/enum/CloseCodes"
 import { GameMode } from "../types/enum/Game"
 import { Language } from "../types/enum/Language"
 import { ITournament } from "../types/interfaces/Tournament"
+import { IUserMetadataMongo } from "../types/interfaces/UserMetadata"
 import { logger } from "../utils/logger"
 import {
-  AddBotCommand,
   BanUserCommand,
   BuyBoosterCommand,
   BuyEmotionCommand,
@@ -33,7 +31,9 @@ import {
   ChangeSelectedEmotionCommand,
   ChangeTitleCommand,
   CreateTournamentLobbiesCommand,
-  DeleteBotCommand,
+  DeleteAccountCommand,
+  DeleteRoomCommand,
+  DeleteTournamentCommand,
   EndTournamentMatchCommand,
   GiveBoostersCommand,
   GiveRoleCommand,
@@ -42,7 +42,6 @@ import {
   JoinOrOpenRoomCommand,
   NextTournamentStageCommand,
   OnCreateTournamentCommand,
-  DeleteRoomCommand,
   OnJoinCommand,
   OnLeaveCommand,
   OnNewMessageCommand,
@@ -50,23 +49,20 @@ import {
   OnSearchCommand,
   OpenBoosterCommand,
   ParticipateInTournamentCommand,
-  RemoveMessageCommand,
-  DeleteTournamentCommand,
-  SelectLanguageCommand,
-  UnbanUserCommand,
   RemakeTournamentLobbyCommand,
-  DeleteAccountCommand
+  RemoveMessageCommand,
+  SelectLanguageCommand,
+  UnbanUserCommand
 } from "./commands/lobby-commands"
 import LobbyState from "./states/lobby-state"
 
 export default class CustomLobbyRoom extends Room<LobbyState> {
-  bots: Map<string, IBot> = new Map<string, IBot>()
   unsubscribeLobby: (() => void) | undefined
   rooms: IRoomCache[] | undefined
   dispatcher: Dispatcher<this>
   tournamentCronJobs: Map<string, CronJob> = new Map<string, CronJob>()
   cleanUpCronJobs: CronJob[] = []
-  users: Map<string, IUserMetadata> = new Map<string, IUserMetadata>()
+  users: Map<string, IUserMetadataMongo> = new Map<string, IUserMetadataMongo>()
 
   constructor() {
     super()
@@ -138,14 +134,6 @@ export default class CustomLobbyRoom extends Room<LobbyState> {
     })
 
     this.rooms = await matchMaker.query({ private: false, unlisted: false })
-
-    this.onMessage(Transfer.DELETE_BOT_DATABASE, async (client, message) => {
-      this.dispatcher.dispatch(new DeleteBotCommand(), { client, message })
-    })
-
-    this.onMessage(Transfer.ADD_BOT_DATABASE, async (client, url) => {
-      this.dispatcher.dispatch(new AddBotCommand(), { client, url })
-    })
 
     this.onMessage(
       Transfer.REQUEST_ROOM,
@@ -331,7 +319,7 @@ export default class CustomLobbyRoom extends Room<LobbyState> {
           index,
           emotion,
           shiny
-        }: { index: string; emotion: Emotion; shiny: boolean }
+        }: { index: string; emotion: Emotion | null; shiny: boolean }
       ) => {
         this.dispatcher.dispatch(new ChangeSelectedEmotionCommand(), {
           client,
@@ -398,12 +386,8 @@ export default class CustomLobbyRoom extends Room<LobbyState> {
       }
     )
 
-    /*this.presence.subscribe("ranked-lobby-winner", (player: IPlayer) => {
-      this.state.addAnnouncement(`${player.name} won the ranked match !`)
-    })*/
-
-    this.presence.subscribe("tournament-winner", (player: IPlayer) => {
-      this.state.addAnnouncement(`${player.name} won the tournament !`)
+    this.presence.subscribe("announcement", (message: string) => {
+      this.state.addAnnouncement(message)
     })
 
     this.presence.subscribe(
@@ -449,13 +433,12 @@ export default class CustomLobbyRoom extends Room<LobbyState> {
 
       return user
     } catch (error) {
-      //logger.info(error)
-      // biome-ignore lint/complexity/noUselessCatch: <explanation>
+      logger.error(`Error on authentication on lobby room`, error)
       throw error // https://docs.colyseus.io/community/deny-player-join-a-room/
     }
   }
 
-  async onJoin(client: Client, options: any, auth: any) {
+  async onJoin(client: Client) {
     const user = await UserMetadata.findOne({ uid: client.auth.uid })
     try {
       if (user?.banned) {
@@ -485,9 +468,8 @@ export default class CustomLobbyRoom extends Room<LobbyState> {
         throw new Error("consented leave")
       }
       await this.allowReconnection(client, 30)
-      // if reconnected, dispatch the same event as if the user had joined to send them the initial data
-      const user = this.users.get(client.auth.uid) ?? null
-      this.dispatcher.dispatch(new OnJoinCommand(), { client, user })
+      // if reconnected, trigger the onJoin logic again to send them the initial data
+      this.onJoin(client)
     } catch (error) {
       this.dispatcher.dispatch(new OnLeaveCommand(), { client })
     }
@@ -532,7 +514,7 @@ export default class CustomLobbyRoom extends Room<LobbyState> {
 
   async fetchTournaments() {
     try {
-      const tournaments = await Tournament.find()
+      const tournaments = await Tournament.find().exec()
       if (tournaments) {
         this.state.tournaments.clear()
         tournaments.forEach(async (tournament) => {

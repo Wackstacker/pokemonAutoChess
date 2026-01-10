@@ -28,3 +28,12 @@ export const fpsToDuration =
 export function calcAngleDegrees(x: number, y: number) {
   return (Math.atan2(y, x) * 180) / Math.PI
 }
+
+export function angleBetween(
+  pointA: [number, number],
+  pointB: [number, number]
+): number {
+  const dx = pointB[0] - pointA[0]
+  const dy = pointB[1] - pointA[1]
+  return Math.atan2(dy, dx)
+}

@@ -1,4 +1,6 @@
-import { Schema, model } from "mongoose"
+import { model, Schema } from "mongoose"
+import { DungeonPMDO } from "../../types/enum/Dungeon"
+import { GameMode } from "../../types/enum/Game"
 import { Item } from "../../types/enum/Item"
 import { Pkm } from "../../types/enum/Pokemon"
 import { Synergy } from "../../types/enum/Synergy"
@@ -19,6 +21,8 @@ export interface IDetailledStatistic {
   avatar: string
   pokemons: Pokemon[]
   synergies: Map<Synergy, number>
+  regions: DungeonPMDO[]
+  gameMode: GameMode
 }
 
 const pokemon = new Schema({
@@ -63,6 +67,15 @@ const statisticSchema = new Schema({
   synergies: {
     type: Map,
     of: Number
+  },
+  regions: [
+    {
+      type: String,
+      enum: DungeonPMDO
+    }
+  ],
+  gameMode: {
+    type: String
   }
 })
 

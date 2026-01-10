@@ -3,15 +3,18 @@ import { GameObjects } from "phaser"
 import Player from "../../../../models/colyseus-models/player"
 import { Item } from "../../../../types/enum/Item"
 import { values } from "../../../../utils/schemas"
-import ItemContainer from "./item-container"
 import { DEPTH } from "../depths"
+import GameScene from "../scenes/game-scene"
+import ItemContainer from "./item-container"
 
 export default class ItemsContainer extends GameObjects.Container {
+  scene: GameScene
   pokemonId: string | null
   playerId: string
+  items: Item[] = []
 
   constructor(
-    scene: Phaser.Scene,
+    scene: GameScene,
     inventory: SetSchema<Item> | ArraySchema<Item>,
     x: number,
     y: number,
@@ -19,7 +22,7 @@ export default class ItemsContainer extends GameObjects.Container {
     playerId: string
   ) {
     super(scene, x, y)
-
+    this.scene = scene
     this.pokemonId = pokemonId
     this.playerId = playerId
     this.setDepth(DEPTH.POKEMON_ITEM)
@@ -34,7 +37,9 @@ export default class ItemsContainer extends GameObjects.Container {
     const ITEMS_PER_COLUMN = 6
     const items = values(inventory)
 
+    this.items = []
     items.forEach((item, i) => {
+      this.items.push(item)
       const x = -1 * itemSize * Math.floor(i / ITEMS_PER_COLUMN)
       const y = (i % ITEMS_PER_COLUMN) * itemSize
       this.add(
@@ -43,7 +48,7 @@ export default class ItemsContainer extends GameObjects.Container {
     })
   }
 
-  closeDetails() {
+  closeTooltips() {
     for (let i = 0; i < this.list.length; i++) {
       const it = <ItemContainer>this.list[i]
       it.closeDetail()
